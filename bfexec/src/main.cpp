@@ -44,15 +44,13 @@ using namespace std::chrono;
 vcpuid_t g_vcpuid;
 domainid_t g_domainid;
 
-auto ctl = std::make_unique<ioctl>();
-
 // -----------------------------------------------------------------------------
 // VMCall
 // -----------------------------------------------------------------------------
 
-uint64_t
-_vmcall(uint64_t r1, uint64_t r2, uint64_t r3, uint64_t r4) noexcept
-{ return ctl->call_ioctl_vmcall(r1, r2, r3, r4); }
+//uint64_t
+//_vmcall(ioctl *ctl, uint64_t r1, uint64_t r2, uint64_t r3, uint64_t r4) noexcept
+//{ return ctl->call_ioctl_vmcall(r1, r2, r3, r4); }
 
 // -----------------------------------------------------------------------------
 // RDTSC
@@ -339,7 +337,7 @@ attach_to_vm(const args_type &args)
 // -----------------------------------------------------------------------------
 
 static void
-create_vm_from_bzimage(const args_type &args)
+create_vm_from_bzimage(const args_type &args, ioctl *ctl)
 {
     create_vm_from_bzimage_args ioctl_args {};
 
@@ -407,6 +405,8 @@ create_vm_from_bzimage(const args_type &args)
 static int
 protected_main(const args_type &args)
 {
+    auto ctl = std::make_unique<ioctl>();
+
     if (args.count("affinity")) {
         set_affinity(args["affinity"].as<uint64_t>());
     }
@@ -422,7 +422,7 @@ protected_main(const args_type &args)
         set_affinity(0);
     }
 
-    create_vm_from_bzimage(args);
+    create_vm_from_bzimage(args, ctl.get());
 
     auto __ = gsl::finally([&] {
         ctl->call_ioctl_destroy(g_domainid);
