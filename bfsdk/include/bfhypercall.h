@@ -562,6 +562,8 @@ hypercall_domain_op__set_reg(ldtr_access_rights)
 #define hypercall_enum_vcpu_op__create_vcpu 0xBF03000000000100
 #define hypercall_enum_vcpu_op__kill_vcpu 0xBF03000000000101
 #define hypercall_enum_vcpu_op__destroy_vcpu 0xBF03000000000102
+#define hypercall_enum_vcpu_op__start_vmexit_trace 0xBF03000000000103
+#define hypercall_enum_vcpu_op__stop_vmexit_trace 0xBF03000000000104
 
 static inline vcpuid_t
 hypercall_vcpu_op__create_vcpu(domainid_t domainid)
@@ -591,6 +593,28 @@ hypercall_vcpu_op__destroy_vcpu(vcpuid_t vcpuid)
     return _vmcall(
         hypercall_enum_vcpu_op__destroy_vcpu,
         vcpuid,
+        0,
+        0
+    );
+}
+
+static inline status_t
+hypercall_vcpu_op__start_vmexit_trace(void)
+{
+    return _vmcall(
+        hypercall_enum_vcpu_op__start_vmexit_trace,
+        0,
+        0,
+        0
+    );
+}
+
+static inline status_t
+hypercall_vcpu_op__stop_vmexit_trace(void)
+{
+    return _vmcall(
+        hypercall_enum_vcpu_op__stop_vmexit_trace,
+        0,
         0,
         0
     );

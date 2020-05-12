@@ -51,7 +51,9 @@ parse_args(int argc, char *argv[])
     ("initrd", "The VM's initrd path", value<std::string>(), "[path]")
     ("cmdline", "Additional Linux command line arguments", value<std::string>(), "[text]")
     ("uart", "Give the VM an emulated UART", value<uint64_t>(), "[port #]")
-    ("pt_uart", "Pass-through a UART to VM", value<uint64_t>(), "[port #]");
+    ("pt_uart", "Pass-through a UART to VM", value<uint64_t>(), "[port #]")
+    ("A,start-vmexit-trace", "Start logging of every vmexit")
+    ("O,stop-vmexit-trace", "Stop logging of every vmexit");
 
     auto args = options.parse(argc, argv);
 
@@ -67,6 +69,11 @@ parse_args(int argc, char *argv[])
 
     if (args.count("verbose")) {
         verbose = true;
+    }
+
+    if (args.count("A") || args.count("O") ||
+        args.count("start-vmexit-trace") || args.count("stop-vmexit-trace")) {
+	return args;
     }
 
     if (!args.count("bzimage")) {

@@ -23,6 +23,8 @@
 #include <hve/arch/intel_x64/domain.h>
 #include <hve/arch/intel_x64/vmcall/vcpu_op.h>
 
+extern bool trace_vmexits;
+
 namespace boxy::intel_x64
 {
 
@@ -94,6 +96,16 @@ vcpu_op_handler::dispatch(vcpu *vcpu)
 
         case hypercall_enum_vcpu_op__destroy_vcpu:
             this->vcpu_op__destroy_vcpu(vcpu);
+            return true;
+
+        case hypercall_enum_vcpu_op__start_vmexit_trace:
+            trace_vmexits = true;
+            vcpu->set_rax(SUCCESS);
+            return true;
+
+        case hypercall_enum_vcpu_op__stop_vmexit_trace:
+            trace_vmexits = false;
+            vcpu->set_rax(SUCCESS);
             return true;
 
         default:

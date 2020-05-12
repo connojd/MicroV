@@ -405,8 +405,6 @@ create_vm_from_bzimage(const args_type &args, ioctl *ctl)
 static int
 protected_main(const args_type &args)
 {
-    auto ctl = std::make_unique<ioctl>();
-
     if (args.count("affinity")) {
         set_affinity(args["affinity"].as<uint64_t>());
     }
@@ -421,6 +419,18 @@ protected_main(const args_type &args)
 
         set_affinity(0);
     }
+
+    if (args.count("A") || args.count("start-vmexit-trace")) {
+        hypercall_vcpu_op__start_vmexit_trace();
+        return EXIT_SUCCESS;
+    }
+
+    if (args.count("O") || args.count("stop-vmexit-trace")) {
+        hypercall_vcpu_op__stop_vmexit_trace();
+        return EXIT_SUCCESS;
+    }
+
+    auto ctl = std::make_unique<ioctl>();
 
     create_vm_from_bzimage(args, ctl.get());
 
