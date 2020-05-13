@@ -33,9 +33,9 @@ vcpu_op_handler::vcpu_op_handler(
 ) :
     m_vcpu{vcpu}
 {
-    if (vcpu->is_domU()) {
-        return;
-    }
+//    if (vcpu->is_domU()) {
+//        return;
+//    }
 
     vcpu->add_vmcall_handler({&vcpu_op_handler::dispatch, this});
 }
@@ -43,6 +43,14 @@ vcpu_op_handler::vcpu_op_handler(
 void
 vcpu_op_handler::vcpu_op__create_vcpu(vcpu *vcpu)
 {
+    vmcs_n::guest_cr4::dump(0);
+    vmcs_n::cr4_guest_host_mask::dump(0);
+    vmcs_n::cr4_read_shadow::dump(0);
+
+    vmcs_n::guest_cr0::dump(0);
+    vmcs_n::cr0_guest_host_mask::dump(0);
+    vmcs_n::cr0_read_shadow::dump(0);
+
     try {
         vcpu->set_rax(bfvmm::vcpu::generate_vcpuid());
         g_vcm->create(vcpu->rax(), get_domain(vcpu->rbx()));
@@ -108,9 +116,26 @@ vcpu_op_handler::dispatch(vcpu *vcpu)
             vcpu->set_rax(SUCCESS);
             return true;
 
+        case hypercall_enum_vcpu_op__dump_kernel_fault:
+	    bfalert_info(0, "FATAL SEGFAULT FROM GUEST:");
+
+	    // Dump linux guest state
+	    vmcs_n::guest_cr4::dump(0);
+	    vmcs_n::cr4_guest_host_mask::dump(0);
+	    vmcs_n::cr4_read_shadow::dump(0);
+
+	    vmcs_n::guest_cr0::dump(0);
+	    vmcs_n::cr0_guest_host_mask::dump(0);
+	    vmcs_n::cr0_read_shadow::dump(0);
+
+	    // Disable exit tracing
+	    trace_vmexits = false;
+
+            return true;
+
         default:
             break;
-    };
+    }
 
     throw std::runtime_error("unknown vcpu opcode");
 }

@@ -564,6 +564,7 @@ hypercall_domain_op__set_reg(ldtr_access_rights)
 #define hypercall_enum_vcpu_op__destroy_vcpu 0xBF03000000000102
 #define hypercall_enum_vcpu_op__start_vmexit_trace 0xBF03000000000103
 #define hypercall_enum_vcpu_op__stop_vmexit_trace 0xBF03000000000104
+#define hypercall_enum_vcpu_op__dump_kernel_fault 0xBF03000000000105
 
 static inline vcpuid_t
 hypercall_vcpu_op__create_vcpu(domainid_t domainid)
