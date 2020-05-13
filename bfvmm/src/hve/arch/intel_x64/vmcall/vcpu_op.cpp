@@ -25,6 +25,79 @@
 
 extern bool trace_vmexits;
 
+struct vmexit_desc {
+    uint32_t reason;
+    uint64_t guest_cr3;
+    uint64_t data[2];
+} __attribute__((packed));
+
+extern struct vmexit_desc exit_reason_list[64];
+extern uint32_t exit_reason_head;
+
+static void dump_vmexit_desc(const struct vmexit_desc *desc)
+{
+    using namespace vmcs_n::exit_reason::basic_exit_reason;
+
+    auto pstr = (desc->reason & (1U << 31)) ? "p" : "c";
+    auto reason = desc->reason;
+
+    reason &= ~(1U << 31);
+
+    switch (reason) {
+    case cpuid:
+        printf("[%s] %s: cr3=0x%lx eax=0x%lx ecx=0x%lx\n",
+               pstr, basic_exit_reason_description(reason), desc->guest_cr3,
+               desc->data[0], desc->data[1]);
+        break;
+    case external_interrupt:
+        printf("[%s] %s: cr3=0x%lx exitinfo:0x%lx\n",
+               pstr, basic_exit_reason_description(reason), desc->guest_cr3,
+               desc->data[0]);
+        break;
+    case wrmsr:
+        printf("[%s] %s: cr3=0x%lx msr=0x%lx val=0x%lx\n",
+               pstr, basic_exit_reason_description(reason), desc->guest_cr3,
+               desc->data[1], desc->data[0]);
+        break;
+    case vmcall:
+        printf("[%s] %s: cr3=0x%lx rax=0x%lx\n",
+               pstr, basic_exit_reason_description(reason), desc->guest_cr3,
+               desc->data[0]);
+        break;
+    default:
+        printf("[%s] %s: cr3=0x%lx\n",
+               pstr, basic_exit_reason_description(reason), desc->guest_cr3);
+        break;
+    }
+}
+
+static void dump_vmexits()
+{
+    using namespace vmcs_n::exit_reason::basic_exit_reason;
+
+    printf("exit reasons (most recent first):\n");
+
+    if (exit_reason_head > 0) {
+        for (int i = exit_reason_head - 1; i >= 0; --i) {
+            dump_vmexit_desc(&exit_reason_list[i]);
+        }
+
+        for (int i = 63; i >= exit_reason_head; --i) {
+            dump_vmexit_desc(&exit_reason_list[i]);
+        }
+    } else {
+        for (int i = 63; i >= exit_reason_head; --i) {
+            dump_vmexit_desc(&exit_reason_list[i]);
+        }
+    }
+
+    printf("\n");
+    printf("ia32_kernel_gs_base: 0x%lx\n", ::x64::msrs::ia32_kernel_gs_base::get());
+    printf("ia32_gs_base: 0x%lx\n", ::intel_x64::msrs::ia32_gs_base::get());
+    printf("ia32_fs_base: 0x%lx\n", ::intel_x64::msrs::ia32_fs_base::get());
+    printf("ia32_xss_msr: 0x%lx\n", ::intel_x64::msrs::ia32_xss::get());
+}
+
 namespace boxy::intel_x64
 {
 
@@ -50,6 +123,13 @@ vcpu_op_handler::vcpu_op__create_vcpu(vcpu *vcpu)
     vmcs_n::guest_cr0::dump(0);
     vmcs_n::cr0_guest_host_mask::dump(0);
     vmcs_n::cr0_read_shadow::dump(0);
+
+    ::intel_x64::msrs::ia32_misc_enable::dump(0);
+
+    auto leaf7 = ::x64::cpuid::get(7, 0, 0, 0);
+    bfdebug_nhex(0, "cpuid leaf 7 ebx", leaf7.rbx);
+    bfdebug_nhex(0, "cpuid leaf 7 ecx", leaf7.rcx);
+    bfdebug_nhex(0, "cpuid leaf 7 edx", leaf7.rdx);
 
     try {
         vcpu->set_rax(bfvmm::vcpu::generate_vcpuid());
@@ -130,6 +210,8 @@ vcpu_op_handler::dispatch(vcpu *vcpu)
 
 	    // Disable exit tracing
 	    trace_vmexits = false;
+
+            dump_vmexits();
 
             return true;
 
