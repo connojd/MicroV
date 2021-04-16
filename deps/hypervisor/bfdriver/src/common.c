@@ -676,6 +676,10 @@ common_load_vmm(void)
     }
 
     BFALERT("Initialized post-boot buddy allocators\n");
+    BFALERT("  page_pool_buf: 0x%llx-0x%llx\n", g_mm_buddy.page_pool_buf, g_mm_buddy.page_pool_buf + page_pool_buf_size() - 1);
+    BFALERT("  page_pool_tree: 0x%llx-0x%llx\n", g_mm_buddy.page_pool_tree, g_mm_buddy.page_pool_tree + page_pool_tree_size() - 1);
+    BFALERT("  huge_pool_buf: 0x%llx-0x%llx\n", g_mm_buddy.huge_pool_buf, g_mm_buddy.huge_pool_buf + huge_pool_buf_size() - 1);
+    BFALERT("  huge_pool_tree: 0x%llx-0x%llx\n", g_mm_buddy.huge_pool_tree, g_mm_buddy.huge_pool_tree + huge_pool_tree_size() - 1);
 
     ret = platform_call_vmm_on_core(0, BF_REQUEST_INIT, 0, 0);
     if (ret != BF_SUCCESS) {

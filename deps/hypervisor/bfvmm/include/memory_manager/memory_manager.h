@@ -394,6 +394,15 @@ public:
     ///
     virtual memory_descriptor_list descriptors() const;
 
+    /// Map MDL
+    ///
+    /// Map frames referenced in the MDL into the VMM's CR3.
+    ///
+    /// @expects none
+    /// @ensures none
+    ///
+    void map_mdl();
+
     /// Get phys to virt mappings
     ///
     /// Returns a pointer to the unordered_map of phys -> virt mappings.

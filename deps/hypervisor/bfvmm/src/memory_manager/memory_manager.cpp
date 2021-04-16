@@ -41,6 +41,7 @@
 #include <bfupperlower.h>
 
 #include <memory_manager/memory_manager.h>
+#include <memory_manager/arch/x64/cr3.h>
 #include <arch/x64/tlb.h>
 
 // -----------------------------------------------------------------------------
@@ -533,6 +534,26 @@ memory_manager::descriptors() const
     }
 
     return list;
+}
+
+void
+memory_manager::map_mdl()
+{
+    for (const auto &entry : m_virt_map) {
+        const auto virt = entry.first;
+        const auto phys = entry.second.phys;
+        const auto attr = entry.second.attr;
+        const auto cache = (attr & MEMORY_TYPE_UC) ?
+                           ::bfvmm::x64::cr3::mmap::memory_type::uncacheable :
+                           ::bfvmm::x64::cr3::mmap::memory_type::write_back;
+
+        if ((attr & (MEMORY_TYPE_R | MEMORY_TYPE_E)) == (MEMORY_TYPE_R | MEMORY_TYPE_E)) {
+            g_cr3->map_4k(virt, phys, ::bfvmm::x64::cr3::mmap::attr_type::read_execute, cache);
+            continue;
+        }
+
+        g_cr3->map_4k(virt, phys, ::bfvmm::x64::cr3::mmap::attr_type::read_write, cache);
+    }
 }
 
 memory_manager::phys_map const *
