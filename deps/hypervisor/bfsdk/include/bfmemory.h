@@ -71,6 +71,24 @@ struct memory_descriptor {
     uint64_t type;
 };
 
+/**
+ * @struct mm_buddy
+ *
+ * Buddy allocators descriptors
+ *
+ * This struct contains info describing allocated memory regions to be
+ * used for the mm's post-boot page and huge pool buddy allocators. 
+ */
+struct mm_buddy {
+    void *page_pool_buf;
+    void *page_pool_tree;
+    uint64_t page_pool_k;
+
+    void *huge_pool_buf;
+    void *huge_pool_tree;
+    uint64_t huge_pool_k;
+};
+
 #ifdef __cplusplus
 }
 #endif

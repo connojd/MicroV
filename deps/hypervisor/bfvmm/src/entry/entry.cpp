@@ -35,6 +35,7 @@
 #include <bfsupport.h>
 #include <bfcallonce.h>
 #include <bfexception.h>
+#include <bfmemory.h>
 
 #include <arch/x64/cache.h>
 #include <vcpu/vcpu_manager.h>
@@ -48,6 +49,17 @@
 
 static bfn::once_flag g_init_flag;
 static bfn::once_flag g_cache_ops_init;
+
+extern "C"
+{
+uint8_t *g_page_pool_buffer;
+uint8_t *g_page_pool_node_tree;
+uint64_t g_page_pool_k;
+
+uint8_t *g_huge_pool_buffer;
+uint8_t *g_huge_pool_node_tree;
+uint64_t g_huge_pool_k;
+}
 
 void
 WEAK_SYM global_init()
@@ -89,6 +101,20 @@ extern "C" int64_t
 private_init() noexcept
 {
     bfn::call_once(g_cache_ops_init, ::x64::cache::init_cache_ops);
+
+    return ENTRY_SUCCESS;
+}
+
+extern "C" int64_t
+private_init_mm_buddy(const struct mm_buddy *buddy) noexcept
+{
+    g_page_pool_buffer = (uint8_t *)buddy->page_pool_buf;
+    g_page_pool_node_tree = (uint8_t *)buddy->page_pool_tree;
+    g_page_pool_k = buddy->page_pool_k;
+
+    g_huge_pool_buffer = (uint8_t *)buddy->huge_pool_buf;
+    g_huge_pool_node_tree = (uint8_t *)buddy->huge_pool_tree;
+    g_huge_pool_k = buddy->huge_pool_k;
 
     return ENTRY_SUCCESS;
 }
@@ -217,6 +243,9 @@ bfmain(uintptr_t request, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3)
 
         case BF_REQUEST_NO_PCI_PT:
             return private_no_pci_pt(arg1);
+
+        case BF_REQUEST_INIT_MM_BUDDY:
+            return private_init_mm_buddy((const struct mm_buddy *)arg1);
 
         default:
             break;

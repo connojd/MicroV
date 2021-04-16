@@ -112,6 +112,9 @@ private:
         size_type size;
     };
 
+    /* Used in the driver code to allocate a node tree of proper size */
+    static_assert(sizeof(node_t) == 32);
+
     inline auto get_size(node_t *node) const
     { return get_bits(node->size, 0x0FFFFFFFFFFFFFFFULL); }
 

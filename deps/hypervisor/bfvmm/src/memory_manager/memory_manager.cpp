@@ -37,6 +37,7 @@
 #include <bfgsl.h>
 #include <bfconstants.h>
 #include <bfexception.h>
+#include <bfmemory.h>
 #include <bfupperlower.h>
 
 #include <memory_manager/memory_manager.h>
@@ -129,6 +130,17 @@ inline void add_stats(size_t size)
 // Implementation
 // -----------------------------------------------------------------------------
 
+extern "C"
+{
+extern uint8_t *g_page_pool_buffer;
+extern uint8_t *g_page_pool_node_tree;
+extern uint64_t g_page_pool_k;
+
+extern uint8_t *g_huge_pool_buffer;
+extern uint8_t *g_huge_pool_node_tree;
+extern uint64_t g_huge_pool_k;
+}
+
 namespace bfvmm
 {
 
@@ -137,14 +149,6 @@ namespace bfvmm
 // -----------------------------------------------------------------------------
 
 /// \cond
-
-constexpr auto g_page_pool_k = PAGE_POOL_K;
-alignas(BAREFLANK_PAGE_SIZE) uint8_t g_page_pool_buffer[buddy_allocator::buffer_size(g_page_pool_k)] = {};
-alignas(BAREFLANK_PAGE_SIZE) uint8_t g_page_pool_node_tree[buddy_allocator::node_tree_size(g_page_pool_k)] = {};
-
-constexpr auto g_huge_pool_k = HUGE_POOL_K;
-alignas(BAREFLANK_PAGE_SIZE) uint8_t g_huge_pool_buffer[buddy_allocator::buffer_size(g_huge_pool_k)] = {};
-alignas(BAREFLANK_PAGE_SIZE) uint8_t g_huge_pool_node_tree[buddy_allocator::node_tree_size(g_huge_pool_k)] = {};
 
 constexpr auto g_mem_map_pool_k = MEM_MAP_POOL_K;
 alignas(BAREFLANK_PAGE_SIZE) uint8_t g_mem_map_pool_node_tree[buddy_allocator::node_tree_size(g_mem_map_pool_k)] = {};
@@ -550,8 +554,8 @@ memory_manager::memory_manager() noexcept :
     slab200(0x200, 0),
     slab400(0x400, 0),
     slab800(0x800, 0),
-    page_pool_bytes{sizeof(g_page_pool_buffer)},
-    huge_pool_bytes{sizeof(g_huge_pool_buffer)}
+    page_pool_bytes{(1UL << g_page_pool_k) * BAREFLANK_PAGE_SIZE},
+    huge_pool_bytes{(1UL << g_huge_pool_k) * BAREFLANK_PAGE_SIZE}
 { }
 
 }

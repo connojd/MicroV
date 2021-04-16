@@ -71,9 +71,116 @@ uint64_t g_stack_top = 0;
 
 void *g_rsdp = 0;
 
+struct mm_buddy g_mm_buddy;
+
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
+
+/* See the definition of struct node_t in buddy_allocator.h */
+#define NODE_SIZE 32
+
+inline uint64_t
+page_pool_buf_size(void)
+{
+    return (1UL << PAGE_POOL_K) * BAREFLANK_PAGE_SIZE;
+}
+
+inline uint64_t
+page_pool_tree_size(void)
+{
+    uint64_t nodes = ((2UL << PAGE_POOL_K) - 1) * NODE_SIZE;
+
+    /* Round up to nearest page */
+    return (nodes + BAREFLANK_PAGE_SIZE) & ~(BAREFLANK_PAGE_SIZE - 1);
+}
+
+inline uint64_t
+huge_pool_buf_size(void)
+{
+    return (1UL << HUGE_POOL_K) * BAREFLANK_PAGE_SIZE;
+}
+
+inline uint64_t
+huge_pool_tree_size(void)
+{
+    uint64_t nodes = ((2UL << HUGE_POOL_K) - 1) * NODE_SIZE;
+
+    /* Round up to nearest page */
+    return (nodes + BAREFLANK_PAGE_SIZE) & ~(BAREFLANK_PAGE_SIZE - 1);
+}
+
+int64_t
+private_alloc_mm_buddy(void)
+{
+    g_mm_buddy.page_pool_buf = platform_alloc_rw(page_pool_buf_size());
+    if (!g_mm_buddy.page_pool_buf) {
+        BFALERT("failed to alloc page pool buffer\n");
+        return BF_ERROR_OUT_OF_MEMORY;
+    }
+
+    g_mm_buddy.page_pool_tree = platform_alloc_rw(page_pool_tree_size());
+    if (!g_mm_buddy.page_pool_tree) {
+        BFALERT("failed to alloc page pool tree\n");
+        goto free_page_buf;
+    }
+
+    g_mm_buddy.huge_pool_buf = platform_alloc_rw(huge_pool_buf_size());
+    if (!g_mm_buddy.huge_pool_buf) {
+        BFALERT("failed to alloc huge pool buffer\n");
+        goto free_page_tree;
+    }
+
+    g_mm_buddy.huge_pool_tree = platform_alloc_rw(huge_pool_tree_size());
+    if (!g_mm_buddy.huge_pool_tree) {
+        BFALERT("failed to alloc huge pool tree\n");
+        goto free_huge_buf;
+    }
+
+    g_mm_buddy.page_pool_k = PAGE_POOL_K;
+    g_mm_buddy.huge_pool_k = HUGE_POOL_K;
+
+    /* Node memory must be zero initialized */
+    platform_memset(g_mm_buddy.page_pool_tree, 0, page_pool_tree_size());
+    platform_memset(g_mm_buddy.huge_pool_tree, 0, huge_pool_tree_size());
+
+    return BF_SUCCESS;
+
+free_huge_buf:
+    platform_free_rw(g_mm_buddy.huge_pool_buf, huge_pool_buf_size());
+
+free_page_tree:
+    platform_free_rw(g_mm_buddy.page_pool_tree, page_pool_tree_size());
+
+free_page_buf:
+    platform_free_rw(g_mm_buddy.page_pool_buf, page_pool_buf_size());
+
+    return BF_ERROR_OUT_OF_MEMORY;
+}
+
+void
+private_free_mm_buddy(void)
+{
+    if (g_mm_buddy.page_pool_buf) {
+        platform_free_rw(g_mm_buddy.page_pool_buf, page_pool_buf_size());
+        g_mm_buddy.page_pool_buf = NULL;
+    }
+
+    if (g_mm_buddy.page_pool_tree) {
+        platform_free_rw(g_mm_buddy.page_pool_tree, page_pool_tree_size());
+        g_mm_buddy.page_pool_tree = NULL;
+    }
+
+    if (g_mm_buddy.huge_pool_buf) {
+        platform_free_rw(g_mm_buddy.huge_pool_buf, huge_pool_buf_size());
+        g_mm_buddy.huge_pool_buf = NULL;
+    }
+
+    if (g_mm_buddy.huge_pool_tree) {
+        platform_free_rw(g_mm_buddy.huge_pool_tree, huge_pool_tree_size());
+        g_mm_buddy.huge_pool_tree = NULL;
+    }
+}
 
 int64_t
 private_setup_stack(void)
@@ -182,6 +289,55 @@ private_add_tss_mdl(void)
 
         int64_t ret = private_add_raw_md_to_memory_manager(
                   (uint64_t)g_tls + i, MEMORY_TYPE_R | MEMORY_TYPE_W);
+
+        if (ret != BF_SUCCESS) {
+            return ret;
+        }
+    }
+
+    return BF_SUCCESS;
+}
+
+int64_t
+private_add_mm_buddy_mdl(void)
+{
+    uint64_t i = 0;
+
+    void *page_pool_buf = g_mm_buddy.page_pool_buf;
+    void *page_pool_tree = g_mm_buddy.page_pool_tree;
+    void *huge_pool_buf = g_mm_buddy.huge_pool_buf;
+    void *huge_pool_tree = g_mm_buddy.huge_pool_tree;
+
+    for (i = 0; i < page_pool_buf_size(); i += BAREFLANK_PAGE_SIZE) {
+        int64_t ret = private_add_raw_md_to_memory_manager(
+                  (uint64_t)page_pool_buf + i, MEMORY_TYPE_R | MEMORY_TYPE_W);
+
+        if (ret != BF_SUCCESS) {
+            return ret;
+        }
+    }
+
+    for (i = 0; i < page_pool_tree_size(); i += BAREFLANK_PAGE_SIZE) {
+        int64_t ret = private_add_raw_md_to_memory_manager(
+                  (uint64_t)page_pool_tree + i, MEMORY_TYPE_R | MEMORY_TYPE_W);
+
+        if (ret != BF_SUCCESS) {
+            return ret;
+        }
+    }
+
+    for (i = 0; i < huge_pool_buf_size(); i += BAREFLANK_PAGE_SIZE) {
+        int64_t ret = private_add_raw_md_to_memory_manager(
+                  (uint64_t)huge_pool_buf + i, MEMORY_TYPE_R | MEMORY_TYPE_W);
+
+        if (ret != BF_SUCCESS) {
+            return ret;
+        }
+    }
+
+    for (i = 0; i < huge_pool_tree_size(); i += BAREFLANK_PAGE_SIZE) {
+        int64_t ret = private_add_raw_md_to_memory_manager(
+                  (uint64_t)huge_pool_tree + i, MEMORY_TYPE_R | MEMORY_TYPE_W);
 
         if (ret != BF_SUCCESS) {
             return ret;
@@ -385,6 +541,8 @@ common_reset(void)
         platform_free_rw(g_stack, g_stack_size);
     }
 
+    private_free_mm_buddy();
+
     g_tls = 0;
     g_stack = 0;
     g_stack_top = 0;
@@ -497,25 +655,48 @@ common_load_vmm(void)
         goto failure;
     }
 
+    ret = private_alloc_mm_buddy();
+    if (ret != BF_SUCCESS) {
+        goto failure;
+    }
+
     ret = bfelf_load(g_modules, (uint64_t)g_num_modules,(void **)&_start_func, &g_info, &g_loader);
     if (ret != BF_SUCCESS) {
         goto failure;
     }
+
+    BFALERT("Loaded elf file\n");
+
+    ret = platform_call_vmm_on_core(0,
+                                    BF_REQUEST_INIT_MM_BUDDY,
+                                    (uint64_t)&g_mm_buddy,
+                                    0);
+    if (ret != BF_SUCCESS) {
+        goto failure;
+    }
+
+    BFALERT("Initialized post-boot buddy allocators\n");
 
     ret = platform_call_vmm_on_core(0, BF_REQUEST_INIT, 0, 0);
     if (ret != BF_SUCCESS) {
         goto failure;
     }
 
+    BFALERT("Initialized crt and cache ops\n");
+
     ret = platform_call_vmm_on_core(0, BF_REQUEST_SET_RSDP,  (uint64_t)g_rsdp, 0);
     if (ret != BF_SUCCESS) {
         goto failure;
     }
 
+    BFALERT("Set RSDP\n");
+
     ret = platform_call_vmm_on_core(0, BF_REQUEST_UEFI_BOOT,  (uint64_t)g_uefi_boot, 0);
     if (ret != BF_SUCCESS) {
         goto failure;
     }
+
+    BFALERT("Set UEFI boot\n");
 
     ret = platform_call_vmm_on_core(0,
                                     BF_REQUEST_WINPV,
@@ -524,6 +705,8 @@ common_load_vmm(void)
     if (ret != BF_SUCCESS) {
         goto failure;
     }
+
+    BFALERT("Set WINPV\n");
 
     for (i = 0; i < no_pci_pt_count; i++) {
         ret = platform_call_vmm_on_core(0,
@@ -535,15 +718,28 @@ common_load_vmm(void)
         }
     }
 
+    BFALERT("Set NO PCI\n");
+
     ret = private_add_modules_mdl();
     if (ret != BF_SUCCESS) {
         goto failure;
     }
 
+    BFALERT("Added modules mdl\n");
+
     ret = private_add_tss_mdl();
     if (ret != BF_SUCCESS) {
         goto failure;
     }
+
+    BFALERT("Added TSS mdl\n");
+
+    ret = private_add_mm_buddy_mdl();
+    if (ret != BF_SUCCESS) {
+        goto failure;
+    }
+
+    BFALERT("Added buddy mdl\n");
 
 #ifdef USE_XUE
     if (g_enable_xue) {
