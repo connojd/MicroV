@@ -121,9 +121,6 @@ public:
     bfvmm::intel_x64::ept::mmap *m_ept{};
     std::unordered_map<xen_pfn_t, class xen_page> m_page_map;
     struct spin_lock m_page_map_lock {};
-    void *m_pages{};
-    uintptr_t m_pages_hpa{};
-    uintptr_t m_next_hpa{};
 
 public:
     ~xen_memory() = default;
