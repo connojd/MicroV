@@ -421,12 +421,29 @@ uint64_t memory_manager::huge_pool_pages() const noexcept
 memory_manager::integer_pointer
 memory_manager::virtint_to_physint(integer_pointer virt) const
 {
-    auto lower = bfn::lower(virt);
-    auto upper = bfn::upper(virt);
+    uint64_t lower;
+    uint64_t upper;
 
     std::lock_guard<std::mutex> guard(md_mutex());
 
-    if (auto iter = m_virt_map.find(upper); iter != m_virt_map.end()) {
+    lower = bfn::lower(virt, ::x64::pdpt::page_shift);
+    upper = bfn::upper(virt, ::x64::pdpt::page_shift);
+
+    if (auto iter = m_virt_map_1g.find(upper); iter != m_virt_map_1g.end()) {
+        return iter->second.phys | lower;
+    }
+
+    lower = bfn::lower(virt, ::x64::pd::page_shift);
+    upper = bfn::upper(virt, ::x64::pd::page_shift);
+
+    if (auto iter = m_virt_map_2m.find(upper); iter != m_virt_map_2m.end()) {
+        return iter->second.phys | lower;
+    }
+
+    lower = bfn::lower(virt, ::x64::pt::page_shift);
+    upper = bfn::upper(virt, ::x64::pt::page_shift);
+
+    if (auto iter = m_virt_map_4k.find(upper); iter != m_virt_map_4k.end()) {
         return iter->second.phys | lower;
     }
 
@@ -450,18 +467,46 @@ memory_manager::virtptr_to_physptr(const pointer virt) const
 memory_manager::integer_pointer
 memory_manager::physint_to_virtint(integer_pointer phys) const
 {
-    auto lower = bfn::lower(phys);
-    auto upper = bfn::upper(phys);
+    uint64_t lower;
+    uint64_t upper;
 
     std::lock_guard<std::mutex> guard(md_mutex());
 
-    if (auto iter = m_phys_map.find(upper); iter != m_phys_map.end()) {
+    lower = bfn::lower(phys, ::x64::pdpt::page_shift);
+    upper = bfn::upper(phys, ::x64::pdpt::page_shift);
+
+    if (auto iter = m_phys_map_1g.find(upper); iter != m_phys_map_1g.end()) {
+        return iter->second.virt | lower;
+    }
+
+    lower = bfn::lower(phys, ::x64::pd::page_shift);
+    upper = bfn::upper(phys, ::x64::pd::page_shift);
+
+    if (auto iter = m_phys_map_2m.find(upper); iter != m_phys_map_2m.end()) {
+        return iter->second.virt | lower;
+    }
+
+    lower = bfn::lower(phys, ::x64::pt::page_shift);
+    upper = bfn::upper(phys, ::x64::pt::page_shift);
+
+    if (auto iter = m_phys_map_4k.find(upper); iter != m_phys_map_4k.end()) {
         return iter->second.virt | lower;
     }
 
     throw std::runtime_error(
         "physint_to_virtint failed: " + bfn::to_string(phys, 16)
     );
+}
+
+bool
+memory_manager::contains_phys(uint64_t phys) const
+{
+    try {
+        (void)this->physint_to_virtint(phys);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 memory_manager::integer_pointer
@@ -479,67 +524,78 @@ memory_manager::physptr_to_virtptr(const pointer phys) const
 void
 memory_manager::add_md(integer_pointer virt, integer_pointer phys, attr_type attr)
 {
-    auto ___ = gsl::on_failure([&] {
-        std::lock_guard<std::mutex> guard(md_mutex());
+    std::lock_guard<std::mutex> guard(md_mutex());
 
-        m_virt_map.erase(virt);
-        m_phys_map.erase(phys);
-    });
+    if (attr & MEMORY_TYPE_1GB) {
+        if (g_cr3->m_have_1g_pages) {
+            expects(bfn::lower(virt, ::x64::pdpt::page_shift) == 0);
+            expects(bfn::lower(phys, ::x64::pdpt::page_shift) == 0);
 
-    expects(bfn::lower(virt) == 0);
-    expects(bfn::lower(phys) == 0);
+            m_virt_map_1g[virt] = {phys, attr};
+            m_phys_map_1g[phys] = {virt, attr};
+        } else {
+            expects(bfn::lower(virt, ::x64::pd::page_shift) == 0);
+            expects(bfn::lower(phys, ::x64::pd::page_shift) == 0);
 
-    {
-        std::lock_guard<std::mutex> guard(md_mutex());
-
-        if (m_virt_map.find(virt) != m_virt_map.end()) {
-            throw std::runtime_error(
-                "memory_manager::add_md: virt already added: " + bfn::to_string(virt, 16)
-            );
+            for (int i = 0; i < ::x64::pdpt::num_entries; i++) {
+                m_virt_map_2m[virt] = {phys, attr};
+                m_phys_map_2m[phys] = {virt, attr};
+            }
         }
+    } else if (attr & MEMORY_TYPE_2MB) {
+        expects(bfn::lower(virt, ::x64::pd::page_shift) == 0);
+        expects(bfn::lower(phys, ::x64::pd::page_shift) == 0);
 
-        if (m_phys_map.find(phys) != m_phys_map.end()) {
-            throw std::runtime_error(
-                "memory_manager::add_md: phys already added: " + bfn::to_string(phys, 16)
-            );
-        }
+        m_virt_map_2m[virt] = {phys, attr};
+        m_phys_map_2m[phys] = {virt, attr};
+    } else {
+        expects(bfn::lower(virt, ::x64::pt::page_shift) == 0);
+        expects(bfn::lower(phys, ::x64::pt::page_shift) == 0);
 
-        m_virt_map[virt] = {phys, attr};
-        m_phys_map[phys] = {virt, attr};
+        m_virt_map_4k[virt] = {phys, attr};
+        m_phys_map_4k[phys] = {virt, attr};
     }
 }
 
 void
 memory_manager::remove_md(integer_pointer virt, integer_pointer phys)
 {
-    expects(bfn::lower(virt) == 0);
-    expects(bfn::lower(phys) == 0);
-
-    {
-        std::lock_guard<std::mutex> guard(md_mutex());
-
-        m_virt_map.erase(virt);
-        m_phys_map.erase(phys);
-    }
-}
-
-memory_manager::memory_descriptor_list
-memory_manager::descriptors() const
-{
-    memory_descriptor_list list;
     std::lock_guard<std::mutex> guard(md_mutex());
 
-    for (const auto &p : m_virt_map) {
-        list.push_back({p.second.phys, p.first, p.second.attr});
+    if (m_virt_map_1g.find(bfn::upper(virt, ::x64::pdpt::page_shift)) !=
+        m_virt_map_1g.end()) {
+        m_virt_map_1g.erase(virt);
+        m_phys_map_1g.erase(phys);
+        return;
     }
 
-    return list;
+    if (m_virt_map_2m.find(bfn::upper(virt, ::x64::pd::page_shift)) !=
+        m_virt_map_2m.end()) {
+        m_virt_map_2m.erase(virt);
+        m_phys_map_2m.erase(phys);
+        return;
+    }
+
+    if (m_virt_map_4k.find(bfn::upper(virt, ::x64::pt::page_shift)) !=
+        m_virt_map_4k.end()) {
+        m_virt_map_4k.erase(virt);
+        m_phys_map_4k.erase(phys);
+        return;
+    }
 }
 
 void
 memory_manager::map_mdl()
 {
-    for (const auto &entry : m_virt_map) {
+    this->map_mdl_1g();
+    this->map_mdl_2m();
+    this->map_mdl_4k();
+}
+
+void
+memory_manager::map_mdl_1g()
+{
+    for (const auto &entry : m_virt_map_1g) {
         const auto virt = entry.first;
         const auto phys = entry.second.phys;
         const auto attr = entry.second.attr;
@@ -547,19 +603,80 @@ memory_manager::map_mdl()
                            ::bfvmm::x64::cr3::mmap::memory_type::uncacheable :
                            ::bfvmm::x64::cr3::mmap::memory_type::write_back;
 
+        ::bfvmm::x64::cr3::mmap::attr_type perm;
+
         if ((attr & (MEMORY_TYPE_R | MEMORY_TYPE_E)) == (MEMORY_TYPE_R | MEMORY_TYPE_E)) {
-            g_cr3->map_4k(virt, phys, ::bfvmm::x64::cr3::mmap::attr_type::read_execute, cache);
-            continue;
+            perm = ::bfvmm::x64::cr3::mmap::attr_type::read_execute;
+        } else {
+            perm = ::bfvmm::x64::cr3::mmap::attr_type::read_write;
         }
 
-        g_cr3->map_4k(virt, phys, ::bfvmm::x64::cr3::mmap::attr_type::read_write, cache);
+        g_cr3->map_1g(virt, phys, perm, cache);
+    }
+}
+
+void
+memory_manager::map_mdl_2m()
+{
+    for (const auto &entry : m_virt_map_2m) {
+        const auto virt = entry.first;
+        const auto phys = entry.second.phys;
+        const auto attr = entry.second.attr;
+        const auto cache = (attr & MEMORY_TYPE_UC) ?
+                           ::bfvmm::x64::cr3::mmap::memory_type::uncacheable :
+                           ::bfvmm::x64::cr3::mmap::memory_type::write_back;
+
+        ::bfvmm::x64::cr3::mmap::attr_type perm;
+
+        if ((attr & (MEMORY_TYPE_R | MEMORY_TYPE_E)) == (MEMORY_TYPE_R | MEMORY_TYPE_E)) {
+            perm = ::bfvmm::x64::cr3::mmap::attr_type::read_execute;
+        } else {
+            perm = ::bfvmm::x64::cr3::mmap::attr_type::read_write;
+        }
+
+        g_cr3->map_2m(virt, phys, perm, cache);
+    }
+}
+
+void
+memory_manager::map_mdl_4k()
+{
+    for (const auto &entry : m_virt_map_4k) {
+        const auto virt = entry.first;
+        const auto phys = entry.second.phys;
+        const auto attr = entry.second.attr;
+        const auto cache = (attr & MEMORY_TYPE_UC) ?
+                           ::bfvmm::x64::cr3::mmap::memory_type::uncacheable :
+                           ::bfvmm::x64::cr3::mmap::memory_type::write_back;
+
+        ::bfvmm::x64::cr3::mmap::attr_type perm;
+
+        if ((attr & (MEMORY_TYPE_R | MEMORY_TYPE_E)) == (MEMORY_TYPE_R | MEMORY_TYPE_E)) {
+            perm = ::bfvmm::x64::cr3::mmap::attr_type::read_execute;
+        } else {
+            perm = ::bfvmm::x64::cr3::mmap::attr_type::read_write;
+        }
+
+        g_cr3->map_4k(virt, phys, perm, cache);
     }
 }
 
 memory_manager::phys_map const *
-memory_manager::get_phys_map() const noexcept
+memory_manager::get_phys_map_4k() const noexcept
 {
-    return &m_phys_map;
+    return &m_phys_map_4k;
+}
+
+memory_manager::phys_map const *
+memory_manager::get_phys_map_2m() const noexcept
+{
+    return &m_phys_map_2m;
+}
+
+memory_manager::phys_map const *
+memory_manager::get_phys_map_1g() const noexcept
+{
+    return &m_phys_map_1g;
 }
 
 memory_manager::memory_manager() noexcept :

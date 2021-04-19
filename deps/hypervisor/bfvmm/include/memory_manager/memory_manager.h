@@ -380,20 +380,6 @@ public:
     virtual void remove_md(
         integer_pointer virt, integer_pointer phys);
 
-    /// Descriptor List
-    ///
-    /// Returns a list of descriptors that have been added to the
-    /// memory manager. Note that to limit the amount of memory that is
-    /// needed for lookups, this function is expensive has it has to
-    /// reconstruct the descriptors currently being stored.
-    ///
-    /// @expects none
-    /// @ensures none
-    ///
-    /// @return memory descriptor list
-    ///
-    virtual memory_descriptor_list descriptors() const;
-
     /// Map MDL
     ///
     /// Map frames referenced in the MDL into the VMM's CR3.
@@ -412,7 +398,9 @@ public:
     ///
     /// @return pointer to phys map
     ///
-    virtual phys_map const *get_phys_map() const noexcept;
+    virtual phys_map const *get_phys_map_1g() const noexcept;
+    virtual phys_map const *get_phys_map_2m() const noexcept;
+    virtual phys_map const *get_phys_map_4k() const noexcept;
 
     /// Page pool pages
     ///
@@ -426,14 +414,28 @@ public:
     ///
     uint64_t huge_pool_pages() const noexcept;
 
+    /// Contains phys
+    ///
+    /// @return true iff the physical address is mapped into the VMM
+    ///
+    bool contains_phys(uint64_t phys) const;
+
 private:
 
     memory_manager() noexcept;
 
+    void map_mdl_4k();
+    void map_mdl_2m();
+    void map_mdl_1g();
+
 private:
 
-    virt_map m_virt_map;
-    phys_map m_phys_map;
+    virt_map m_virt_map_4k;
+    phys_map m_phys_map_4k;
+    virt_map m_virt_map_2m;
+    phys_map m_phys_map_2m;
+    virt_map m_virt_map_1g;
+    phys_map m_phys_map_1g;
 
     buddy_allocator g_page_pool;
     buddy_allocator g_huge_pool;

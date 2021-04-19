@@ -102,7 +102,10 @@ public:
     ///
     mmap() :
         m_pml4{allocate_span(::x64::pml4::num_entries), 0}
-    { }
+    {
+        using namespace ::intel_x64::cpuid;
+        m_have_1g_pages = ext_feature_info::edx::pages_avail::is_enabled();
+    }
 
     /// Destructor
     ///
@@ -1117,6 +1120,8 @@ private:
 public:
 
     /// @cond
+
+    bool m_have_1g_pages;
 
     mmap(mmap &&) = delete;
     mmap &operator=(mmap &&) = delete;

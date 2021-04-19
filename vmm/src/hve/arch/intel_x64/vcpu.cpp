@@ -139,7 +139,7 @@ static bool handle_root_ept_violation(
     info.ignore_advance = false;
 
     /* Check VMM pages */
-    if (g_mm->get_phys_map()->count(gpa_4k)) {
+    if (g_mm->contains_phys(gpa_4k)) {
         printv("ALERT: EPT violation to vmm page 0x%lx, skipping rip=0x%lx\n",
                gpa_4k,
                vcpu->rip());
@@ -200,63 +200,142 @@ static bool handle_root_ept_violation(
     return true;
 }
 
-static void unmap_vmm()
+static void unmap_vmm_1g()
+{
+    auto dom = vcpu0->dom();
+    auto ept = &dom->ept();
+
+    const auto &phys_map = *g_mm->get_phys_map_1g();
+
+    for (const auto &p : phys_map) {
+        auto phys = p.first;
+
+        for (auto i = 0; i < ::x64::pdpt::num_entries; i++) {
+            const auto gpa_2m = phys + i * ::x64::pd::page_size;
+
+            try {
+                if (ept->is_2m(gpa_2m)) {
+                    ept->unmap(gpa_2m);
+                    ept->release(gpa_2m);
+                } else {
+                    for (auto j = 0; j < ::x64::pd::num_entries; j++) {
+                        const auto gpa_4k = gpa_2m + j * ::x64::pt::page_size;
+
+                        try {
+                            ept->unmap(gpa_4k);
+                            ept->release(gpa_4k);
+                        } catch (std::exception &e) {
+                            printv("ept: %s: failed to unmap 0x%llx (4K), what=%s\n",
+                                   __func__, gpa_4k, e.what());
+                        }
+                    }
+                }
+            } catch (std::exception &e) {
+                printv("ept: %s: failed to unmap 0x%llx, what=%s\n",
+                        __func__, gpa_2m, e.what());
+            }
+        }
+    }
+}
+
+static void unmap_vmm_2m()
+{
+    auto dom = vcpu0->dom();
+    auto ept = &dom->ept();
+
+    const auto &phys_map = *g_mm->get_phys_map_2m();
+
+    for (const auto &p : phys_map) {
+        auto gpa_2m = p.first;
+
+        try {
+            if (ept->is_2m(gpa_2m)) {
+                ept->unmap(gpa_2m);
+                ept->release(gpa_2m);
+            } else {
+                for (auto j = 0; j < ::x64::pd::num_entries; j++) {
+                    const auto gpa_4k = gpa_2m + j * ::x64::pt::page_size;
+
+                    try {
+                        ept->unmap(gpa_4k);
+                        ept->release(gpa_4k);
+                    } catch (std::exception &e) {
+                        printv("ept: %s: failed to unmap 0x%llx (4K), what=%s\n",
+                               __func__, gpa_4k, e.what());
+                    }
+                }
+            }
+        } catch (std::exception &e) {
+            printv("ept: %s: failed to unmap 0x%lx (2M), what=%s\n",
+                    __func__, gpa_2m, e.what());
+        }
+    }
+}
+
+static void unmap_vmm_4k()
 {
     using namespace ::bfvmm::intel_x64::ept;
 
     auto dom = vcpu0->dom();
     auto ept = &dom->ept();
 
-    for (const auto &p : *g_mm->get_phys_map()) {
-        const auto type = p.second.attr;
-        const auto phys = p.first;
+    const auto &phys_map = *g_mm->get_phys_map_4k();
 
-        if (type & MEMORY_TYPE_SHARED) {
+    for (const auto &p : phys_map) {
+        if (p.second.attr & MEMORY_TYPE_SHARED) {
             continue;
         }
 
-        const auto itr = dom->m_vmm_map_whitelist.find(phys);
-
-        if (itr != dom->m_vmm_map_whitelist.end()) {
-            const auto hpa = itr->first;
-            const auto gpa = itr->second;
-
-            if (hpa == gpa) {
-                continue;
-            }
-
-            /* When hpa != gpa, gpa was remapped to hpa by previous code, that,
-             * due to the initial identity map, presents us with the following
-             * situation:
-             *
-             *     gpa_x  gpa_y
-             *     |     /
-             *     |   /
-             *     hpa_x  hpa_y
-             *
-             * In this case, hpa == hpa_x and gpa == gpa_y. So below we need to
-             * unmap gpa_x == hpa_x == hpa == phys.
-             */
-        }
-
-        const auto gpa_4k = bfn::upper(phys, ::x64::pt::from);
-        const auto gpa_2m = bfn::upper(phys, ::x64::pd::from);
+        const auto phys = p.first;
+        const auto gpa_2m = bfn::upper(phys, ::x64::pd::page_shift);
 
         if (ept->is_2m(gpa_2m)) {
             identity_map_convert_2m_to_4k(*ept, gpa_2m);
         }
 
         try {
-            ept->unmap(gpa_4k);
-            ept->release(gpa_4k);
-        }
-        catch (std::runtime_error &e) {
+            ept->unmap(phys);
+            ept->release(phys);
+        } catch (std::exception &e) {
             printv("ept: %s: failed to unmap 0x%lx, what=%s\n",
                    __func__,
-                   gpa_4k,
+                   phys,
                    e.what());
         }
     }
+}
+
+static void remap_vmm_whitelist()
+{
+    auto dom = vcpu0->dom();
+    auto ept = &dom->ept();
+
+    for (const auto &p : dom->m_vmm_map_whitelist) {
+        const auto hpa = p.first;
+        const auto gpa = p.second;
+
+        try {
+            if (hpa != gpa) {
+                /* Nothing to do for remapped ACPI tables */
+                continue;
+            }
+
+            ept->map_4k(gpa, hpa,
+                        ::bfvmm::intel_x64::ept::mmap::attr_type::read_write);
+        } catch (std::exception &e) {
+            printv("ept: %s: failed to map gpa 0x%lx to hpa 0x%lx, what=%s\n",
+                    __func__, gpa, hpa, e.what());
+        }
+    }
+}
+
+static void unmap_vmm()
+{
+    unmap_vmm_1g();
+    unmap_vmm_2m();
+    unmap_vmm_4k();
+
+    remap_vmm_whitelist();
 }
 
 //------------------------------------------------------------------------------

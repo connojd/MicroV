@@ -73,6 +73,10 @@ void *g_rsdp = 0;
 
 struct mm_buddy g_mm_buddy;
 
+#define PAGE_4KB (1UL << 12)
+#define PAGE_2MB (1UL << 21)
+#define PAGE_1GB (1UL << 30)
+
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -298,51 +302,107 @@ private_add_tss_mdl(void)
     return BF_SUCCESS;
 }
 
+static inline
+uint64_t align_4k(const uint8_t *buf)
+{
+    return (uint64_t)buf & ~(PAGE_4KB - 1);
+}
+
+static inline
+int is_2m_aligned(uint64_t buf)
+{
+    return (buf & (PAGE_2MB - 1)) == 0;
+}
+
+static inline
+int is_1g_aligned(uint64_t buf)
+{
+    return (buf & (PAGE_1GB - 1)) == 0;
+}
+
+int64_t
+private_add_buf_mdl_rw(uint8_t *buf, uint64_t size)
+{
+    int64_t ret;
+    uint64_t added = 0;
+    uint64_t buf_4k = align_4k(buf);
+
+    while (added < size && !is_2m_aligned(buf_4k)) {
+        ret = private_add_raw_md_to_memory_manager((uint64_t)buf_4k,
+                                                    MEMORY_TYPE_R | MEMORY_TYPE_W);
+        if (ret != BF_SUCCESS) {
+            return ret;
+        }
+
+        buf_4k += PAGE_4KB;
+        added += PAGE_4KB;
+    }
+
+    while (added < size &&
+           !is_1g_aligned(buf_4k) &&
+           (size - added) >= PAGE_2MB) {
+        ret = private_add_raw_md_to_memory_manager((uint64_t)buf_4k,
+                                                    MEMORY_TYPE_R | MEMORY_TYPE_W | MEMORY_TYPE_2MB);
+        if (ret != BF_SUCCESS) {
+            return ret;
+        }
+
+        buf_4k += PAGE_2MB;
+        added += PAGE_2MB;
+    }
+
+    while (added < size &&
+           is_1g_aligned(buf_4k) &&
+           (size - added) >= PAGE_1GB) {
+        ret = private_add_raw_md_to_memory_manager((uint64_t)buf_4k,
+                                                    MEMORY_TYPE_R | MEMORY_TYPE_W | MEMORY_TYPE_1GB);
+        if (ret != BF_SUCCESS) {
+            return ret;
+        }
+
+        buf_4k += PAGE_1GB;
+        added += PAGE_1GB;
+    }
+
+    while (added < size &&
+           is_2m_aligned(buf_4k) &&
+           (size - added) >= PAGE_2MB) {
+        ret = private_add_raw_md_to_memory_manager((uint64_t)buf_4k,
+                                                    MEMORY_TYPE_R | MEMORY_TYPE_W | MEMORY_TYPE_2MB);
+        if (ret != BF_SUCCESS) {
+            return ret;
+        }
+
+        buf_4k += PAGE_2MB;
+        added += PAGE_2MB;
+    }
+
+    while (added < size) {
+        ret = private_add_raw_md_to_memory_manager((uint64_t)buf_4k,
+                                                    MEMORY_TYPE_R | MEMORY_TYPE_W);
+        if (ret != BF_SUCCESS) {
+            return ret;
+        }
+
+        buf_4k += PAGE_4KB;
+        added += PAGE_4KB;
+    }
+
+    return BF_SUCCESS;
+}
+
 int64_t
 private_add_mm_buddy_mdl(void)
 {
-    uint64_t i = 0;
-
     void *page_pool_buf = g_mm_buddy.page_pool_buf;
     void *page_pool_tree = g_mm_buddy.page_pool_tree;
     void *huge_pool_buf = g_mm_buddy.huge_pool_buf;
     void *huge_pool_tree = g_mm_buddy.huge_pool_tree;
 
-    for (i = 0; i < page_pool_buf_size(); i += BAREFLANK_PAGE_SIZE) {
-        int64_t ret = private_add_raw_md_to_memory_manager(
-                  (uint64_t)page_pool_buf + i, MEMORY_TYPE_R | MEMORY_TYPE_W);
-
-        if (ret != BF_SUCCESS) {
-            return ret;
-        }
-    }
-
-    for (i = 0; i < page_pool_tree_size(); i += BAREFLANK_PAGE_SIZE) {
-        int64_t ret = private_add_raw_md_to_memory_manager(
-                  (uint64_t)page_pool_tree + i, MEMORY_TYPE_R | MEMORY_TYPE_W);
-
-        if (ret != BF_SUCCESS) {
-            return ret;
-        }
-    }
-
-    for (i = 0; i < huge_pool_buf_size(); i += BAREFLANK_PAGE_SIZE) {
-        int64_t ret = private_add_raw_md_to_memory_manager(
-                  (uint64_t)huge_pool_buf + i, MEMORY_TYPE_R | MEMORY_TYPE_W);
-
-        if (ret != BF_SUCCESS) {
-            return ret;
-        }
-    }
-
-    for (i = 0; i < huge_pool_tree_size(); i += BAREFLANK_PAGE_SIZE) {
-        int64_t ret = private_add_raw_md_to_memory_manager(
-                  (uint64_t)huge_pool_tree + i, MEMORY_TYPE_R | MEMORY_TYPE_W);
-
-        if (ret != BF_SUCCESS) {
-            return ret;
-        }
-    }
+    private_add_buf_mdl_rw(page_pool_buf, page_pool_buf_size());
+    private_add_buf_mdl_rw(page_pool_tree, page_pool_tree_size());
+    private_add_buf_mdl_rw(huge_pool_buf, huge_pool_buf_size());
+    private_add_buf_mdl_rw(huge_pool_tree, huge_pool_tree_size());
 
     return BF_SUCCESS;
 }

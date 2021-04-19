@@ -44,6 +44,8 @@ extern "C" {
 #define MEMORY_TYPE_E 0x4U
 #define MEMORY_TYPE_UC 0x8U
 #define MEMORY_TYPE_SHARED 0x10U
+#define MEMORY_TYPE_2MB 0x20U
+#define MEMORY_TYPE_1GB 0x40U
 
 /* @endcond */
 
@@ -77,7 +79,7 @@ struct memory_descriptor {
  * Buddy allocators descriptors
  *
  * This struct contains info describing allocated memory regions to be
- * used for the mm's post-boot page and huge pool buddy allocators. 
+ * used for the mm's post-boot page and huge pool buddy allocators.
  */
 struct mm_buddy {
     void *page_pool_buf;
