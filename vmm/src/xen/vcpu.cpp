@@ -102,15 +102,6 @@ bool xen_vcpu::init_hypercall_page(base_vcpu *vcpu, wrmsr_handler::info_t &info)
     const auto gpa = info.val;
     const auto gfn = xen_frame(gpa);
 
-    if (vcpu->is_guest_vcpu()) {
-        const auto err = m_xen_dom->m_memory->map_page(gfn, pg_perm_rwe);
-        if (err) {
-            vcpu->set_rax(err);
-            printv("%s: map_page failed, rc=%d\n", __func__, err);
-            return false;
-        }
-    }
-
     auto map = vcpu->map_gpa_4k<uint8_t>(gpa);
     auto buf = gsl::span(map.get(), 0x1000);
 

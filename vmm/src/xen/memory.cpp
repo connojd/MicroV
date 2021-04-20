@@ -605,24 +605,6 @@ void xen_memory::map_page(class xen_page *pg)
     pg->present = true;
 }
 
-int xen_memory::map_page(xen_pfn_t gfn, uint32_t perms)
-{
-    auto pg = this->find_page(gfn);
-    if (!pg) {
-        return -ENXIO;
-    }
-
-    if (pg->present) {
-        printv("%s: warning: gfn 0x%0lx already present, returning\n",
-               __func__,
-               gfn);
-        return 0;
-    }
-
-    this->map_page(pg);
-    return 0;
-}
-
 void xen_memory::add_page(xen_pfn_t gfn, uint32_t perms, uint32_t mtype)
 {
     std::lock_guard lock(m_page_map_lock);
