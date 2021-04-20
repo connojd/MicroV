@@ -41,7 +41,6 @@ static_assert(std::is_standard_layout<grant_entry_header_t>::value);
 
 struct gnttab_copy_operand {
     uint8_t *buf{nullptr};
-    class xen_page *xpg{nullptr};
     const gnttab_copy_t::gnttab_copy_ptr *copy_ptr{nullptr};
     atomic_hdr_t *gte_hdr{nullptr};
     bool is_src{false};
@@ -296,7 +295,7 @@ static inline void unpin_granted_page(grant_entry_header_t *gte_hdr) noexcept
 
 static inline int map_foreign_frame(xen_vcpu *vcpu,
                                     gnttab_map_grant_ref_t *map,
-                                    xen_page *fpg,
+                                    xen_memory *fmem,
                                     xen_pfn_t fgfn,
                                     grant_handle_t map_handle)
 {
@@ -318,10 +317,11 @@ static inline int map_foreign_frame(xen_vcpu *vcpu,
     auto lmem = vcpu->m_xen_dom->m_memory.get();
     xen_pfn_t lgfn = xen_frame(lgpa);
 
-    if (fpg) {
-        lmem->add_foreign_page(lgfn, perm, pg_mtype_wb, fpg->page);
+    if (map->dom == DOMID_ROOTVM) {
+        lmem->m_ept->map_4k(xen_addr(lgfn), xen_addr(fgfn), perm, pg_mtype_wb);
     } else {
-        lmem->add_raw_page(lgfn, perm, pg_mtype_wb, fgfn);
+        uint64_t hpa = fmem->m_ept->virt_to_phys(xen_addr(fgfn)).first;
+        lmem->m_ept->map_4k(xen_addr(lgfn), hpa, perm, pg_mtype_wb);
     }
 
     return GNTST_okay;
@@ -331,17 +331,10 @@ static inline int unmap_foreign_frame(xen_domain *ldom,
                                       uint64_t lgpa,
                                       grant_handle_t map_handle)
 {
-    const auto lgfn = xen_frame(lgpa);
-
-    if (auto rc = ldom->m_memory.get()->remove_page(lgfn, false); rc) {
-        printv("%s: failed to remove_page: gfn=0x%lx, rc=%d\n",
-               __func__,
-               lgfn,
-               rc);
-        return GNTST_general_error;
-    }
-
+    ldom->m_memory.get()->m_ept->unmap(lgpa);
+    ldom->m_memory.get()->m_ept->release(lgpa);
     ldom->m_gnttab.get()->map_handles.erase(map_handle);
+
     return GNTST_okay;
 }
 
@@ -367,18 +360,15 @@ static void xen_gnttab_map_grant_ref(xen_vcpu *vcpu,
 
     auto fdom = op->dom;
     auto fgnt = op->gnt;
+    auto fmem = fdom->m_memory.get();
 
     xen_pfn_t fgfn;
-    xen_page *fpg{nullptr};
 
     if (fgnt->invalid_ref(map->ref)) {
         printv("%s: OOB ref:0x%x for dom:0x%x\n", __func__, map->ref, map->dom);
 
         if (map->dom == DOMID_ROOTVM && map->ref == GNTTAB_RESERVED_XENSTORE) {
             fgfn = fdom->m_hvm->get_param(HVM_PARAM_STORE_PFN);
-            fpg = fdom->m_memory.get()->find_page(fgfn);
-
-            expects(fpg);
             goto map_frame;
         }
 
@@ -392,22 +382,9 @@ static void xen_gnttab_map_grant_ref(xen_vcpu *vcpu,
     }
 
     fgfn = fgnt->shared_gfn(map->ref);
-    fpg = fdom->m_memory.get()->find_page(fgfn);
-
-    if (!fpg) {
-        if (map->dom != DOMID_ROOTVM) {
-            printv("%s: gfn 0x%lx not mapped in dom 0x%x\n",
-                   __func__,
-                   fgfn,
-                   map->dom);
-            rc = GNTST_general_error;
-            unpin_granted_page(fgnt->shared_header(map->ref));
-            goto out;
-        }
-    }
 
 map_frame:
-    rc = map_foreign_frame(vcpu, map, fpg, fgfn, new_hdl);
+    rc = map_foreign_frame(vcpu, map, fmem, fgfn, new_hdl);
     if (rc != GNTST_okay) {
         unpin_granted_page(fgnt->shared_header(map->ref));
     }
@@ -561,14 +538,6 @@ static bool valid_copy_args(gnttab_copy_t *copy)
     return true;
 }
 
-static xen_page *winpv_xen_page() noexcept
-{
-    static page winpv_pg{0};
-    static xen_page winpv_xen_pg{0, pg_perm_rw, pg_mtype_wb, &winpv_pg};
-
-    return &winpv_xen_pg;
-}
-
 static inline bool has_access(const gnttab_copy_operand *op,
                               xen_domid_t domid,
                               const grant_entry_header_t *hdr) noexcept
@@ -678,55 +647,6 @@ static inline void put_copy_gfn(gnttab_copy_operand *op) noexcept
     op->gte_hdr = nullptr;
 }
 
-static int get_copy_page(xen_domain *dom, xen_pfn_t gfn, xen_page **xpg)
-{
-    xen_page *pg = dom->m_memory.get()->find_page(gfn);
-
-    if (pg) {
-        *xpg = pg;
-        return GNTST_okay;
-    }
-
-    if (dom->m_id != DOMID_ROOTVM) {
-        printv("%s: gfn 0x%lx doesnt map to page\n", __func__, gfn);
-        return GNTST_general_error;
-    }
-
-    pg = winpv_xen_page();
-
-    pg->page->ptr = nullptr;
-    pg->page->hfn = gfn;
-    pg->page->src = pg_src_root;
-    pg->gfn = gfn;
-
-    *xpg = pg;
-    return GNTST_okay;
-}
-
-static int get_copy_buf(gnttab_copy_operand *op)
-{
-    xen_page *xpg = op->xpg;
-    expects(xpg->backed());
-
-    if (xpg->page->ptr) {
-        op->buf = reinterpret_cast<uint8_t *>(xpg->page->ptr);
-        return GNTST_okay;
-    }
-
-    op->buf = map_copy_page(xpg);
-
-    if (!op->buf) {
-        printv("%s: map_copy_page failed: gfn=0x%lx hfn=0x%lx\n",
-               __func__,
-               xpg->gfn,
-               xpg->page->hfn);
-        return GNTST_general_error;
-    }
-
-    op->unmap_buf = true;
-    return GNTST_okay;
-}
-
 static inline void put_copy_buf(gnttab_copy_operand *op)
 {
     if (op->unmap_buf) {
@@ -760,18 +680,21 @@ static int get_copy_operand(xen_vcpu *vcpu, gnttab_copy_operand *op)
         }
     }
 
-    int rc = get_copy_page(dom, gfn, &op->xpg);
-    if (rc != GNTST_okay) {
-        put_copy_gfn(op);
-        put_copy_dom(vcpu, domid);
-        return rc;
+    uint64_t hpa;
+    auto mem = dom->m_memory.get();
+
+    if (dom->m_id != DOMID_ROOTVM) {
+        hpa = mem->m_ept->virt_to_phys(xen_addr(gfn)).first;
+    } else {
+        hpa = xen_addr(gfn);
     }
 
-    rc = get_copy_buf(op);
-    if (rc != GNTST_okay) {
-        put_copy_gfn(op);
-        put_copy_dom(vcpu, domid);
-        return rc;
+    op->buf = (uint8_t *)g_mm->physint_to_virtptr(hpa);
+
+    if (!op->buf) {
+        op->buf = (uint8_t *)g_mm->alloc_map(UV_PAGE_SIZE);
+        g_cr3->map_4k(op->buf, hpa);
+        op->unmap_buf = true;
     }
 
     return GNTST_okay;
