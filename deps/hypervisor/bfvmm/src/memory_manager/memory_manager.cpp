@@ -447,9 +447,7 @@ memory_manager::virtint_to_physint(integer_pointer virt) const
         return iter->second.phys | lower;
     }
 
-    throw std::runtime_error(
-        "virtint_to_physint failed: " + bfn::to_string(virt, 16)
-    );
+    return 0;
 }
 
 memory_manager::integer_pointer
@@ -493,20 +491,13 @@ memory_manager::physint_to_virtint(integer_pointer phys) const
         return iter->second.virt | lower;
     }
 
-    throw std::runtime_error(
-        "physint_to_virtint failed: " + bfn::to_string(phys, 16)
-    );
+    return 0;
 }
 
 bool
 memory_manager::contains_phys(uint64_t phys) const
 {
-    try {
-        (void)this->physint_to_virtint(phys);
-        return true;
-    } catch (...) {
-        return false;
-    }
+    return this->physint_to_virtint(phys) != 0;
 }
 
 memory_manager::integer_pointer
