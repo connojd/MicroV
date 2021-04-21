@@ -607,21 +607,9 @@ void xen_memory::map_page(class xen_page *pg)
 
 void xen_memory::add_page(xen_pfn_t gfn, uint32_t perms, uint32_t mtype)
 {
-    std::lock_guard lock(m_page_map_lock);
+    auto pg = g_mm->alloc_page();
 
-    expects(m_page_map.count(gfn) == 0);
-
-    auto pg = alloc_unbacked_page();
-    m_page_map.try_emplace(gfn, xen_page(gfn, perms, mtype, pg));
-
-    auto xenpg = this->find_page(gfn, true);
-    auto rc = this->back_page(xenpg);
-    if (rc) {
-        printv("%s: failed to back gfn 0x%lx, rc=%d\n", __func__, gfn, rc);
-        return;
-    }
-
-    this->map_page(xenpg);
+    m_ept->map_4k(xen_addr(gfn), g_mm->virtptr_to_physint(pg), perms, mtype);
 }
 
 /* Add a page with root backing */
@@ -804,16 +792,10 @@ bool xen_memory::add_to_physmap_batch(xen_vcpu *v,
 
     try {
         auto fmem = fdom->m_memory.get();
-        auto pg = fmem->find_page(*fpfn.get());
+        auto hpa = fmem->m_ept->virt_to_phys(xen_addr(*fpfn.get())).first;
 
-        if (!pg) {
-            put_xen_domain(fdomid);
-            uvv->set_rax(-ENXIO);
-            return true;
-        }
-
-        this->add_foreign_page(*gpfn.get(), pg_perm_rw, pg_mtype_wb, pg->page);
-        this->invept();
+        m_ept->map_4k(xen_addr(*gpfn.get()), hpa, pg_perm_rw, pg_mtype_wb);
+        this->invept(); /* this can probably be removed */
         m_xen_dom->m_uv_dom->flush_iotlb_page_4k(xen_addr(*gpfn.get()));
 
         uvv->set_rax(0);
@@ -841,9 +823,15 @@ int xen_memory::remove_page(xen_pfn_t gfn, bool need_invept)
     std::lock_guard lock(m_page_map_lock);
 
     auto itr = m_page_map.find(gfn);
-    if (GSL_UNLIKELY(itr == m_page_map.end())) {
-        printv("%s: gfn 0x%lx doesn't map to page\n", __func__, gfn);
-        return -ENXIO;
+    if (itr == m_page_map.end()) {
+        m_ept->unmap(xen_addr(gfn));
+        m_ept->release(xen_addr(gfn));
+
+        if (need_invept) {
+            this->invept();
+        }
+
+        return 0;
     }
 
     auto pg = &itr->second;
@@ -1143,4 +1131,5 @@ bool xen_memory::remove_from_physmap(xen_vcpu *v,
     v->m_uv_vcpu->set_rax(0);
     return true;
 }
+
 }

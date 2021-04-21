@@ -253,9 +253,11 @@ bool xen_hvm::set_param(xen_vcpu *vcpu, xen_hvm_param_t *p)
     case HVM_PARAM_PAGING_RING_PFN:
     case HVM_PARAM_MONITOR_RING_PFN:
     case HVM_PARAM_SHARING_RING_PFN:
-        if (!xen_mem->find_page(p->value)) {
-            xen_mem->add_page(p->value, pg_perm_rw, pg_mtype_wb);
-        }
+            try {
+                xen_mem->add_page(p->value, pg_perm_rw, pg_mtype_wb);
+            } catch (std::exception &e) {
+                printv("ALERT: %s: add_page threw, what=%s\n", __func__, e.what());
+            }
         break;
     case HVM_PARAM_STORE_EVTCHN:
     case HVM_PARAM_CONSOLE_EVTCHN:
