@@ -93,7 +93,9 @@ public:
     mmap() :
         m_pml4{allocate_span(::intel_x64::ept::pml4::num_entries), 0},
         m_iommu_incoherent{false},
-        m_iommu_snoop_ctl{false}
+        m_iommu_snoop_ctl{false},
+        m_has_2m_pages{::intel_x64::msrs::ia32_vmx_ept_vpid_cap::pde_2mb_support::is_enabled()},
+        m_has_1g_pages{::intel_x64::msrs::ia32_vmx_ept_vpid_cap::pdpte_1gb_support::is_enabled()}
     { }
 
     /// Destructor
@@ -1411,6 +1413,8 @@ private:
     mutable std::mutex m_mutex;
     bool m_iommu_incoherent;
     bool m_iommu_snoop_ctl;
+    bool m_has_2m_pages;
+    bool m_has_1g_pages;
 
 public:
 
