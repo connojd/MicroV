@@ -117,6 +117,8 @@ huge_pool_tree_size(void)
 int64_t
 private_alloc_mm_buddy(void)
 {
+    uint64_t huge_aligned;
+
     g_mm_buddy.page_pool_buf = platform_alloc_rw(page_pool_buf_size());
     if (!g_mm_buddy.page_pool_buf) {
         BFALERT("failed to alloc page pool buffer\n");
@@ -129,11 +131,16 @@ private_alloc_mm_buddy(void)
         goto free_page_buf;
     }
 
-    g_mm_buddy.huge_pool_buf = platform_alloc_rw(huge_pool_buf_size());
+    g_mm_buddy.huge_pool_buf = platform_alloc_rw(huge_pool_buf_size() + PAGE_1GB);
     if (!g_mm_buddy.huge_pool_buf) {
         BFALERT("failed to alloc huge pool buffer\n");
         goto free_page_tree;
     }
+
+    huge_aligned = (uint64_t)g_mm_buddy.huge_pool_buf + PAGE_1GB;
+    huge_aligned &= ~(PAGE_1GB - 1);
+
+    g_mm_buddy.huge_pool_buf_aligned = (void *)huge_aligned;
 
     g_mm_buddy.huge_pool_tree = platform_alloc_rw(huge_pool_tree_size());
     if (!g_mm_buddy.huge_pool_tree) {
@@ -151,7 +158,7 @@ private_alloc_mm_buddy(void)
     return BF_SUCCESS;
 
 free_huge_buf:
-    platform_free_rw(g_mm_buddy.huge_pool_buf, huge_pool_buf_size());
+    platform_free_rw(g_mm_buddy.huge_pool_buf, huge_pool_buf_size() + PAGE_1GB);
 
 free_page_tree:
     platform_free_rw(g_mm_buddy.page_pool_tree, page_pool_tree_size());
@@ -176,8 +183,9 @@ private_free_mm_buddy(void)
     }
 
     if (g_mm_buddy.huge_pool_buf) {
-        platform_free_rw(g_mm_buddy.huge_pool_buf, huge_pool_buf_size());
+        platform_free_rw(g_mm_buddy.huge_pool_buf, huge_pool_buf_size() + PAGE_1GB);
         g_mm_buddy.huge_pool_buf = NULL;
+        g_mm_buddy.huge_pool_buf_aligned = NULL;
     }
 
     if (g_mm_buddy.huge_pool_tree) {
@@ -396,7 +404,7 @@ private_add_mm_buddy_mdl(void)
 {
     void *page_pool_buf = g_mm_buddy.page_pool_buf;
     void *page_pool_tree = g_mm_buddy.page_pool_tree;
-    void *huge_pool_buf = g_mm_buddy.huge_pool_buf;
+    void *huge_pool_buf = g_mm_buddy.huge_pool_buf_aligned;
     void *huge_pool_tree = g_mm_buddy.huge_pool_tree;
 
     private_add_buf_mdl_rw(page_pool_buf, page_pool_buf_size());

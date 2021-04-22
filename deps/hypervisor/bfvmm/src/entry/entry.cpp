@@ -112,7 +112,7 @@ private_init_mm_buddy(const struct mm_buddy *buddy) noexcept
     g_page_pool_node_tree = (uint8_t *)buddy->page_pool_tree;
     g_page_pool_k = buddy->page_pool_k;
 
-    g_huge_pool_buffer = (uint8_t *)buddy->huge_pool_buf;
+    g_huge_pool_buffer = (uint8_t *)buddy->huge_pool_buf_aligned;
     g_huge_pool_node_tree = (uint8_t *)buddy->huge_pool_tree;
     g_huge_pool_k = buddy->huge_pool_k;
 

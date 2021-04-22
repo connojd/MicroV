@@ -87,6 +87,7 @@ struct mm_buddy {
     uint64_t page_pool_k;
 
     void *huge_pool_buf;
+    void *huge_pool_buf_aligned;
     void *huge_pool_tree;
     uint64_t huge_pool_k;
 };
