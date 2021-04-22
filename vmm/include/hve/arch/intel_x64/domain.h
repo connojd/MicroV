@@ -569,6 +569,7 @@ public:
     void flush_iotlb();
     void flush_iotlb_page_4k(uint64_t page_gpa);
     void flush_iotlb_page_2m(uint64_t page_gpa);
+    void flush_iotlb_page_range(uint64_t page_gpa, uint64_t bytes);
 
 private:
     friend class microv::xen_domain;
