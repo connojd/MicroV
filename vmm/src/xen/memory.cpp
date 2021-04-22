@@ -59,7 +59,7 @@ static inline size_t root_frames()
 /* How many free frames from the VMM are there? */
 static inline size_t vmm_pool_pages()
 {
-    return g_mm->page_pool_pages();
+    return g_mm->page_pool_pages() + g_mm->huge_pool_pages();
 }
 
 xen_pfn_t alloc_root_frame()
@@ -605,11 +605,46 @@ void xen_memory::map_page(class xen_page *pg)
     pg->present = true;
 }
 
-void xen_memory::add_page(xen_pfn_t gfn, uint32_t perms, uint32_t mtype)
+void xen_memory::add_page(xen_pfn_t gfn, uint32_t perms, uint32_t mtype, uint32_t size)
 {
-    auto pg = g_mm->alloc_page();
+    void *pg;
+    uint64_t hpa;
+    uint64_t gpa = xen_addr(gfn);
 
-    m_ept->map_4k(xen_addr(gfn), g_mm->virtptr_to_physint(pg), perms, mtype);
+    switch (size) {
+    case PAGE_SIZE_4K:
+        pg = g_mm->alloc_page();
+        hpa = g_mm->virtptr_to_physint(pg);
+
+        expects(pg);
+        expects(hpa);
+
+        m_ept->map_4k(gpa, hpa, perms, mtype);
+        break;
+    case PAGE_SIZE_2M:
+        pg = g_mm->alloc(PAGE_SIZE_2M);
+        hpa = g_mm->virtptr_to_physint(pg);
+
+        expects(pg);
+        expects(hpa);
+        expects((hpa & (PAGE_SIZE_2M - 1)) == 0);
+
+        m_ept->map_2m(gpa, hpa, perms, mtype);
+        break;
+    case PAGE_SIZE_1G:
+        pg = g_mm->alloc(PAGE_SIZE_1G);
+        hpa = g_mm->virtptr_to_physint(pg);
+
+        expects(pg);
+        expects(hpa);
+        expects((hpa & (PAGE_SIZE_1G - 1)) == 0);
+
+        m_ept->map_1g(gpa, hpa, perms, mtype);
+        break;
+    default:
+        printv("ERROR: %s: unexpected page size=%u\n", __func__, size);
+        break;
+    }
 }
 
 /* Add a page with root backing */
@@ -804,6 +839,8 @@ bool xen_memory::add_to_physmap_batch(xen_vcpu *v,
         return true;
     }
     catch (...) {
+        printv("%s: FAILED to add foreign frame 0x%lx\n", __func__, *fpfn.get());
+
         uvv->set_rax(-EFAULT);
         put_xen_domain(fdomid);
 
@@ -818,17 +855,76 @@ void xen_memory::unmap_page(class xen_page *pg)
     pg->present = false;
 }
 
+void xen_memory::shatter_page_1g(uint64_t gpa)
+{
+    auto gpa_1g = gpa & ~(PAGE_SIZE_1G - 1);
+    auto hpa_1g = m_ept->virt_to_phys(gpa_1g).first;
+
+    expects((hpa_1g & (PAGE_SIZE_1G - 1)) == 0);
+
+    m_ept->unmap(gpa_1g);
+    m_ept->release(gpa_1g);
+
+    for (auto i = 0; i < 512; i++) {
+        auto gpa_2m = gpa_1g + i * PAGE_SIZE_2M;
+        auto hpa_2m = hpa_1g + i * PAGE_SIZE_2M;
+
+        m_ept->map_2m(gpa_2m, hpa_2m, pg_perm_rwe, pg_mtype_wb);
+    }
+}
+
+void xen_memory::shatter_page_2m(uint64_t gpa)
+{
+    auto gpa_2m = gpa & ~(PAGE_SIZE_2M - 1);
+    auto hpa_2m = m_ept->virt_to_phys(gpa_2m).first;
+
+    expects((hpa_2m & (PAGE_SIZE_2M - 1)) == 0);
+
+    m_ept->unmap(gpa_2m);
+    m_ept->release(gpa_2m);
+
+    for (auto i = 0; i < 512; i++) {
+        auto gpa_4k = gpa_2m + i * PAGE_SIZE_4K;
+        auto hpa_4k = hpa_2m + i * PAGE_SIZE_4K;
+
+        m_ept->map_4k(gpa_4k, hpa_4k, pg_perm_rwe, pg_mtype_wb);
+    }
+}
+
 int xen_memory::remove_page(xen_pfn_t gfn, bool need_invept)
 {
     std::lock_guard lock(m_page_map_lock);
 
+    auto gpa = xen_addr(gfn);
     auto itr = m_page_map.find(gfn);
+
     if (itr == m_page_map.end()) {
-        m_ept->unmap(xen_addr(gfn));
-        m_ept->release(xen_addr(gfn));
+        uint64_t size, flush_gpa;
+
+        if (m_ept->is_1g(gpa)) {
+            size = PAGE_SIZE_1G;
+            flush_gpa = gpa & ~(PAGE_SIZE_1G - 1);
+
+            this->shatter_page_1g(gpa);
+            this->shatter_page_2m(gpa);
+        } else if (m_ept->is_2m(gpa)) {
+            size = PAGE_SIZE_2M;
+            flush_gpa = gpa & ~(PAGE_SIZE_2M - 1);
+
+            this->shatter_page_2m(gpa);
+        } else {
+            expects(m_ept->is_4k(gpa));
+
+            size = PAGE_SIZE_4K;
+            flush_gpa = gpa & ~(PAGE_SIZE_4K - 1);
+        }
+
+        m_ept->unmap(gpa);
+        m_ept->release(gpa);
 
         if (need_invept) {
             this->invept();
+            m_xen_dom->m_uv_dom->flush_iotlb_page_range(flush_gpa, size);
         }
 
         return 0;
@@ -842,7 +938,7 @@ int xen_memory::remove_page(xen_pfn_t gfn, bool need_invept)
 
     if (need_invept) {
         this->invept();
-        m_xen_dom->m_uv_dom->flush_iotlb_page_4k(xen_addr(gfn));
+        m_xen_dom->m_uv_dom->flush_iotlb_page_4k(gpa);
     }
 
     /* Free the backing page if no other refs exist */
@@ -885,16 +981,18 @@ bool xen_memory::decrease_reservation(xen_vcpu *v,
     auto nr_done = 0U;
 
     if (uvv->is_guest_vcpu()) {
+        expects(rsv->extent_order == 0);
+
         for (auto i = 0U; i < rsv->nr_extents; i++) {
             if (this->remove_page(gfn[i], false)) {
                 break;
             }
 
-            m_xen_dom->m_uv_dom->flush_iotlb_page_4k(xen_addr(gfn[i]));
             nr_done++;
         }
 
         this->invept();
+        m_xen_dom->m_uv_dom->flush_iotlb();
         uvv->set_rax(nr_done);
     } else {
         expects(v->m_xen_dom->m_id == DOMID_ROOTVM);
@@ -1005,12 +1103,10 @@ bool xen_memory::populate_physmap(xen_vcpu *v, xen_memory_reservation_t *rsv)
     auto pages_per_ext = 1UL << rsv->extent_order;
 
     if (uvv->is_guest_vcpu()) {
-        for (auto i = 0; i < rsv->nr_extents; i++) {
-            auto gfn = ext.get()[i];
+        uint64_t page_size = PAGE_SIZE_4K * (1UL << rsv->extent_order);
 
-            for (auto j = 0; j < pages_per_ext; j++) {
-                this->add_page(gfn + j, pg_perm_rwe, pg_mtype_wb);
-            }
+        for (auto i = 0; i < rsv->nr_extents; i++) {
+            this->add_page(ext.get()[i], pg_perm_rwe, pg_mtype_wb, page_size);
         }
 
         m_xen_dom->m_total_pages += rsv->nr_extents * pages_per_ext;
@@ -1104,9 +1200,10 @@ bool xen_memory::set_memory_map(xen_vcpu *v, xen_foreign_memory_map_t *fmap)
     for (auto i = 0U; i < size; i++) {
         auto entry = &e820_buf[i];
 
-        printv("%s: e820: addr:0x%lx size:%luKB type:%s\n",
+        printv("%s: e820: [0x%lx-0x%lx] %luKB (%s)\n",
                __func__,
                entry->addr,
+               entry->addr + entry->size - 1,
                entry->size >> 12,
                e820_type_str(entry->type));
 
@@ -1117,7 +1214,7 @@ bool xen_memory::set_memory_map(xen_vcpu *v, xen_foreign_memory_map_t *fmap)
         }
     }
 
-    printv("%s: total RAM: %lu MB\n", __func__, total_ram >> 20);
+    printv("%s: e820: total RAM: %lu MB\n", __func__, total_ram >> 20);
 
     uvv->set_rax(0);
     return true;

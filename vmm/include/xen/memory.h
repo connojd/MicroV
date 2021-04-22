@@ -32,6 +32,10 @@ inline constexpr size_t XEN_PAGE_SIZE = 0x1000;
 inline constexpr size_t XEN_PAGE_FROM = 12;
 inline constexpr xen_pfn_t XEN_INVALID_PFN = ~0;
 
+constexpr uint64_t PAGE_SIZE_4K = (1UL << 12);
+constexpr uint64_t PAGE_SIZE_2M = (1UL << 21);
+constexpr uint64_t PAGE_SIZE_1G = (1UL << 30);
+
 xen_pfn_t alloc_root_frame();
 
 class page *alloc_unbacked_page();
@@ -85,7 +89,11 @@ public:
     /* Page management */
     class xen_page *find_page(xen_pfn_t gfn, bool locked = false);
 
-    void add_page(xen_pfn_t gfn, uint32_t perms, uint32_t mtype);
+    void add_page(xen_pfn_t gfn,
+                  uint32_t perms,
+                  uint32_t mtype,
+                  uint32_t size);
+
     void add_root_backed_page(xen_pfn_t gfn,
                               uint32_t perms,
                               uint32_t mtype,
@@ -111,6 +119,9 @@ public:
 
     void map_page(class xen_page *pg);
     void unmap_page(class xen_page *pg);
+
+    void shatter_page_2m(uint64_t gpa);
+    void shatter_page_1g(uint64_t gpa);
 
     int remove_page(xen_pfn_t gfn, bool need_invept);
     int back_page(class xen_page *pg);

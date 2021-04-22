@@ -72,7 +72,7 @@
 */
 
 #ifndef HUGE_POOL_K
-#define HUGE_POOL_K (15ULL)
+#define HUGE_POOL_K (19ULL)
 #endif
 /*
 * Memory Map Pool K
