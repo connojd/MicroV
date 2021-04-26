@@ -983,6 +983,10 @@ bool xen_vcpu::debug_hypercall(microv_vcpu *vcpu)
         return false;
     }
 
+    if (rax == __HYPERVISOR_domctl) {
+        return false;
+    }
+
     if (rax == __HYPERVISOR_sysctl) {
         auto ctl = vcpu->map_arg<xen_sysctl_t>(rdi);
         switch (ctl->cmd) {
