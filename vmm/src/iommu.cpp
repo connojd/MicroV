@@ -273,6 +273,8 @@ void iommu::init_regs()
 {
     m_ver = this->read32(ver_offset);
 
+    printv("iommu[%u]: version %u.%u\n", m_id, (m_ver & 0xF0) >> 4, m_ver & 0xF);
+
     m_did_bits = (uint8_t)(4 + ((m_cap & cap_nd_mask) << 1));
     m_mgaw = ((m_cap & cap_mgaw_mask) >> cap_mgaw_from) + 1;
     m_sagaw = ((m_cap & cap_sagaw_mask) >> cap_sagaw_from);
@@ -363,6 +365,8 @@ void iommu::bind_devices()
         auto drhd_end =
             reinterpret_cast<uint8_t *>(m_drhd) + m_drhd->hdr.length;
 
+        uint32_t count = 0;
+
         /* First device scope entry */
         uint8_t *ds = reinterpret_cast<uint8_t *>(m_scope);
 
@@ -373,44 +377,66 @@ void iommu::bind_devices()
                 break;
             }
 
-            auto path_len = (scope->length - sizeof(*scope)) / 2;
-            auto path = reinterpret_cast<struct dmar_devscope_path *>(
-                ds + sizeof(*scope));
-
-            auto bus = scope->start_bus;
-            auto dev = path[0].dev;
-            auto fun = path[0].fun;
-
-            for (auto i = 1; i < path_len; i++) {
-                const auto addr = pci_cfg_bdf_to_addr(bus, dev, fun);
-                const auto reg6 = pci_cfg_read_reg(addr, 6);
-
-                bus = pci_bridge_sec_bus(reg6);
-                dev = path[i].dev;
-                fun = path[i].fun;
+            switch (scope->type) {
+            case 0x1:
+            case 0x2:
+                break;
+            case 0x3:
+                printv("iommu[%u] devscope[%u]: IOAPIC\n", m_id, count);
+                break;
+            case 0x4:
+                printv("iommu[%u] devscope[%u]: HPET\n", m_id, count);
+                break;
+            case 0x5:
+                printv("iommu[%u] devscope[%u]: ACPI namespace device\n",
+                       m_id, count);
+                break;
+            default:
+                printv("iommu[%u] devscope[%u]: UNKNOWN device: %d\n",
+                       m_id, count, scope->type);
+                break;
             }
 
-            for (auto pdev : pci_list) {
-                if (pdev->m_iommu) {
-                    continue;
+            count++;
+
+            if (scope->type <= 0x2) {
+                auto path_len = (scope->length - sizeof(*scope)) / 2;
+                auto path = reinterpret_cast<struct dmar_devscope_path *>(
+                    ds + sizeof(*scope));
+
+                auto bus = scope->start_bus;
+                auto dev = path[0].dev;
+                auto fun = path[0].fun;
+
+                for (auto i = 1; i < path_len; i++) {
+                    const auto addr = pci_cfg_bdf_to_addr(bus, dev, fun);
+                    const auto reg6 = pci_cfg_read_reg(addr, 6);
+
+                    bus = pci_bridge_sec_bus(reg6);
+                    dev = path[i].dev;
+                    fun = path[i].fun;
                 }
 
-                const auto addr = pci_cfg_bdf_to_addr(bus, dev, fun);
-                if (pdev->matches(addr)) {
-                    this->bind_device(pdev);
+                for (auto pdev : pci_list) {
+                    if (pdev->m_iommu) {
+                        continue;
+                    }
 
-                    if (scope->type == ds_pci_subhierarchy) {
-                        expects(pdev->is_pci_bridge());
-                        const auto reg6 = pci_cfg_read_reg(addr, 6);
-                        this->bind_bus(pci_bridge_sec_bus(reg6));
+                    const auto addr = pci_cfg_bdf_to_addr(bus, dev, fun);
+                    if (pdev->matches(addr)) {
+                        this->bind_device(pdev);
+
+                        if (scope->type == ds_pci_subhierarchy) {
+                            expects(pdev->is_pci_bridge());
+                            const auto reg6 = pci_cfg_read_reg(addr, 6);
+                            this->bind_bus(pci_bridge_sec_bus(reg6));
+                        }
                     }
                 }
             }
 
             ds += scope->length;
         }
-
-        ensures(!m_pci_devs.empty());
     } else {
         for (auto pdev : pci_list) {
             if (pdev->m_iommu) {
@@ -423,6 +449,11 @@ void iommu::bind_devices()
 
 void iommu::dump_devices()
 {
+    // Remapping units dont necessarily map PCI devices. IOAPICs
+    // HPETs, and ACPI namespace devices may be in scope.
+    if (!m_pci_devs.size())
+        return;
+
     printv("iommu[%u]: scopes %lu devices:\n", m_id, m_pci_devs.size());
 
     for (const auto pdev : m_pci_devs) {
@@ -582,8 +613,13 @@ void iommu::map_bdf(uint32_t bus, uint32_t devfn, dom_t *dom)
 
     auto cte = &ctx_hva[devfn];
 
-    cte_set_tt(cte, CTE_TT_U);
-    cte_set_slptptr(cte, dom->ept().pml4_phys());
+    if (dom->id() == 0) {
+        cte_set_tt(cte, CTE_TT_PT);
+    } else {
+        cte_set_tt(cte, CTE_TT_U);
+        cte_set_slptptr(cte, dom->ept().pml4_phys());
+    }
+
     cte_set_aw(cte, m_aw);
     cte_set_did(cte, this->did(dom));
     cte_set_present(cte);
@@ -615,8 +651,13 @@ void iommu::map_bus(uint32_t bus, dom_t *dom)
     for (auto i = 0; i < table_size; i++) {
         entry_t *cte = &ctx_table[i];
 
-        cte_set_tt(cte, CTE_TT_U);
-        cte_set_slptptr(cte, dom->ept().pml4_phys());
+        if (dom->id() == 0) {
+            cte_set_tt(cte, CTE_TT_PT);
+        } else {
+            cte_set_tt(cte, CTE_TT_U);
+            cte_set_slptptr(cte, dom->ept().pml4_phys());
+        }
+
         cte_set_aw(cte, m_aw);
         cte_set_did(cte, this->did(dom));
         cte_set_present(cte);
@@ -891,31 +932,141 @@ void iommu::flush_iotlb_page_range(const dom_t *dom,
     }
 }
 
+void iommu::qinval_quiesce()
+{
+    uint64_t iqt = this->read_iqt() & 0x7FFF0;
+    uint64_t iqh = this->read_iqh() & 0x7FFF0;
+
+    if (iqt == iqh) {
+        printv("iommu[%u]: invalidation queue is quiesced\n", m_id);
+        return;
+    }
+
+    uint64_t iqa = this->read_iqa();
+    uint64_t addr = iqa & ~0xFFFULL;
+    uint64_t width = (iqa & (1 << 11)) ? 256 : 128;
+    uint64_t order = (iqa & 0x7);
+    uint64_t pages = 1ULL << order;
+    uint64_t entries = (width == 256)
+                       ? (1ULL << (order + 7))
+                       : (1ULL << (order + 8));
+
+    printv("%s: addr=0x%lx, width=%lu, %lu pages, %lu entries\n",
+            __func__, addr, width, pages, entries);
+
+    // clear IQE and ITE bits in fault status register
+again:
+    while (this->read32(fsts_offset) & 0x50) {
+        ::intel_x64::mb();
+        this->ack_faults();
+    }
+
+    iqt = this->read_iqt() & 0x7FFF0;
+    iqh = this->read_iqh() & 0x7FFF0;
+
+    if (iqt != iqh) {
+        printv("iommu[%u]: invalidation queue is not quiesced...retrying\n", m_id);
+        ::intel_x64::mb();
+        goto again;
+    }
+}
+
+void iommu::qinval_disable()
+{
+    uint32_t gsts = this->read_gsts() & 0x96FFFFFF;
+    uint32_t gcmd = gsts & ~(1ULL << 26);
+
+    ::intel_x64::mb();
+
+    this->write_gcmd(gcmd);
+    ::intel_x64::mb();
+    while ((this->read_gsts() & (1ULL << 26)) != 0) {
+        ::intel_x64::pause();
+    }
+
+    printv("iommu[%u]: disabled queued invalidation\n", m_id);
+}
+
+void iommu::int_remap_disable()
+{
+    uint32_t gsts = this->read_gsts() & 0x96FFFFFF;
+    uint32_t gcmd = gsts & ~(1ULL << 25);
+
+    ::intel_x64::mb();
+
+    this->write_gcmd(gcmd);
+    ::intel_x64::mb();
+    while ((this->read_gsts() & (1ULL << 25)) != 0) {
+        ::intel_x64::pause();
+    }
+
+    printv("iommu[%u]: disabled interrupt remapping\n", m_id);
+}
+
+void iommu::dma_remap_disable()
+{
+    uint32_t gsts = this->read_gsts() & 0x96FFFFFF;
+    uint32_t gcmd = gsts & ~gcmd_te;
+
+    ::intel_x64::mb();
+
+    this->write_gcmd(gcmd);
+    ::intel_x64::mb();
+    while ((this->read_gsts() & gsts_tes) != 0) {
+        ::intel_x64::pause();
+    }
+
+    printv("iommu[%u]: disabled DMA remapping\n", m_id);
+}
+
 void iommu::enable_dma_remapping()
 {
     if (m_remapping_dma) {
         return;
     }
 
+    ::intel_x64::wmb();
+
+    uint32_t gsts = this->read_gsts() & 0x96FF'FFFF;
+    printv("iommu[%u]: global_status=0x%x\n", m_id, gsts);
+
+    if (gsts & (1UL << 26)) {
+        this->qinval_quiesce();
+        this->qinval_disable();
+    }
+
+    if (gsts & (1UL << 25)) {
+        this->int_remap_disable();
+    }
+
+    if (gsts & gcmd_te) {
+        this->dma_remap_disable();
+    }
+
+    gsts = this->read_gsts() & 0x96FFFFFF;
+    printv("iommu[%u]: global_status=0x%x\n", m_id, gsts);
+
+    printv("iommu[%u]: setting root table pointer\n", m_id);
     this->clflush_range(m_root.get(), UV_PAGE_SIZE);
     this->write_rtaddr(g_mm->virtptr_to_physint(m_root.get()));
 
-    ::intel_x64::wmb();
-
-    /* Set the root table pointer */
-    uint32_t gsts = this->read_gsts() & 0x96FF'FFFF;
+    ::intel_x64::mb();
     uint32_t gcmd = gsts | gcmd_srtp;
-
     this->write_gcmd(gcmd);
+
     ::intel_x64::mb();
     while ((this->read_gsts() & gsts_rtps) != gsts_rtps) {
         ::intel_x64::pause();
     }
 
+    printv("iommu[%u]: flushing ctx cache\n", m_id);
     this->flush_ctx_cache();
+
+    printv("iommu[%u]: flushing IOTLB\n", m_id);
     this->flush_iotlb();
 
     /* Enable DMA translation */
+    printv("iommu[%u]: enabling DMA remapping\n", m_id);
     gsts = this->read_gsts() & 0x96FF'FFFF;
     gcmd = gsts | gcmd_te;
 

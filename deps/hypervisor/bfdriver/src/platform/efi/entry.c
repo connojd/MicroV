@@ -354,9 +354,18 @@ efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
 
     ioctl_add_module((char *)vmm, vmm_len);
     ioctl_load_vmm();
+
+    BFALERT("VMM loaded\n");
+
     ioctl_start_vmm();
 
+    BFALERT("VMM started\n");
+
     unmap_vmm_from_root_domain();
+
+    BFALERT("VMM unmapped from root domain\n");
+    BFALERT("Booting next image...\n");
+
     load_start_vm(image);
 
     return EFI_SUCCESS;

@@ -25,6 +25,7 @@
 #include <bfvmm/hve/arch/intel_x64/vcpu.h>
 #include <hve/arch/intel_x64/vcpu.h>
 #include <hve/arch/intel_x64/apic/lapic.h>
+#include <printv.h>
 
 namespace microv::intel_x64 {
 
@@ -263,6 +264,9 @@ bool lapic::emulate_wrmsr_base(base_vcpu *v, wrmsr_handler::info_t &info)
     const auto old_hpa = m_xapic_hpa;
     const auto new_hpa = base::apic_base::get(info.val);
 
+    printv("%s: old_state:%u, old_hpa:%lx, new_state:%u, new_hpa:%lx\n",
+           __func__, old_state, old_hpa, new_state, new_hpa);
+
     switch (new_state) {
     case base::state::x2apic:
         if (old_state == base::state::xapic) {
@@ -276,22 +280,33 @@ bool lapic::emulate_wrmsr_base(base_vcpu *v, wrmsr_handler::info_t &info)
         }
         break;
     case base::state::xapic:
-        expects(old_state == base::state::xapic);
         if (old_hpa != new_hpa) {
-            m_xapic_hpa = new_hpa;
-            g_cr3->unmap(m_xapic_hva);
-            g_cr3->map_4k(m_xapic_hva,
-                          m_xapic_hpa,
-                          cr3::mmap::attr_type::read_write,
-                          cr3::mmap::memory_type::uncacheable);
-            ::x64::tlb::invlpg(m_xapic_hva);
-            m_base_msr = info.val;
-            base::set(info.val);
-            ensures(m_vcpu->gpa_to_hpa(new_hpa).first == new_hpa);
+            if (m_xapic_hva) {
+                m_xapic_hpa = new_hpa;
+                g_cr3->unmap(m_xapic_hva);
+                g_cr3->map_4k(m_xapic_hva,
+                              m_xapic_hpa,
+                              cr3::mmap::attr_type::read_write,
+                              cr3::mmap::memory_type::uncacheable);
+                ::x64::tlb::invlpg(m_xapic_hva);
+                m_base_msr = info.val;
+                base::set(info.val);
+                ensures(m_vcpu->gpa_to_hpa(new_hpa).first == new_hpa);
+            } else {
+                m_base_msr = info.val;
+                this->init_xapic();
+                base::set(info.val);
+
+                const auto id = this->read(ID_REG);
+                printv("%s: xAPIC ID: %u, existing ID: %u\n", __func__, id >> 24, m_local_id);
+                m_local_id = id;
+            }
         }
         break;
     default:
-        bferror_nhex(0, "Invalid lapic state", new_state);
+        printv("%s: lapic reset\n", __func__);
+        m_base_msr = info.val;
+        base::set(info.val);
         break;
     }
 

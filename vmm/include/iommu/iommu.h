@@ -183,6 +183,18 @@ private:
     {
         return read64(m_iotlb_reg_off + 8);
     }
+    uint64_t read_iqa()
+    {
+        return read64(iqa_offset);
+    }
+    uint64_t read_iqt()
+    {
+        return read64(iqt_offset);
+    }
+    uint64_t read_iqh()
+    {
+        return read64(iqh_offset);
+    }
 
     void write_gcmd(uint32_t val)
     {
@@ -212,6 +224,10 @@ private:
     void bind_devices();
     void bind_device(struct pci_dev *pdev);
     void bind_bus(uint32_t bus);
+    void int_remap_disable();
+    void dma_remap_disable();
+    void qinval_disable();
+    void qinval_quiesce();
 
     size_t nr_domains() const
     {

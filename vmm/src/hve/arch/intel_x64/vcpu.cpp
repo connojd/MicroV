@@ -653,6 +653,7 @@ bool vcpu::handle_0x4BF00012(bfvmm::intel_x64::vcpu *vcpu)
     }
 
     if (vcpu->id() == 0) {
+        printv("%s: Unmap VMM from root\n", __func__);
         unmap_vmm();
 
         if (pci_passthru) {
@@ -666,7 +667,10 @@ bool vcpu::handle_0x4BF00012(bfvmm::intel_x64::vcpu *vcpu)
                 root_dom->assign_pci_device(pdev);
             }
 
+            printv("%s: Preparing IOMMUs\n", __func__);
             root_dom->prepare_iommus();
+
+            printv("%s: Mapping root DMA\n", __func__);
             root_dom->map_dma();
         }
     }

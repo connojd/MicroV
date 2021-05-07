@@ -437,19 +437,19 @@ void pci_dev::init_root_vcfg()
 
     auto ven = passthru_vendor;
     auto dev = passthru_device++;
-    auto sts_cmd = pci_cfg_read_reg(m_cf8, 1);
-
-    sts_cmd &= ~(BUS_MASTER_ENABLE | MMIO_SPACE_ENABLE | PMIO_SPACE_ENABLE);
-    sts_cmd |= INTX_DISABLE;
-
-    pci_cfg_write_reg(m_cf8, 1, sts_cmd);
+//    auto sts_cmd = pci_cfg_read_reg(m_cf8, 1);
+//
+//    sts_cmd &= ~(BUS_MASTER_ENABLE | MMIO_SPACE_ENABLE | PMIO_SPACE_ENABLE);
+//    sts_cmd |= INTX_DISABLE;
+//
+//    pci_cfg_write_reg(m_cf8, 1, sts_cmd);
 
     for (auto i = 0; i < 0x40; i++) {
         m_vcfg[i] = pci_cfg_read_reg(m_cf8, i);
     }
 
     m_vcfg[0x0] = (dev << 16) | ven;
-    m_vcfg[0x1] |= (BUS_MASTER_ENABLE | MMIO_SPACE_ENABLE | PMIO_SPACE_ENABLE);
+//    m_vcfg[0x1] |= (BUS_MASTER_ENABLE | MMIO_SPACE_ENABLE | PMIO_SPACE_ENABLE);
     m_vcfg[0xD] = m_msi_cap * 4;
     m_vcfg[0xF] = 0xFF;
 
@@ -484,7 +484,7 @@ void pci_dev::add_root_handlers(vcpu *vcpu)
             continue;
         }
 
-        unmap_pmio_bar(vcpu, &bar);
+        //unmap_pmio_bar(vcpu, &bar);
 
         if (vcpu->id() == 0) {
             printv("pci: %s: PMIO BAR[%u] at 0x%lx-0x%lx\n",
@@ -507,7 +507,7 @@ void pci_dev::add_root_handlers(vcpu *vcpu)
             continue;
         }
 
-        unmap_mmio_bar(&vcpu->dom()->ept(), &bar);
+        //unmap_mmio_bar(&vcpu->dom()->ept(), &bar);
 
         printv("pci: %s: MMIO BAR[%u] at 0x%lx-0x%lx (%s, %s)\n",
                this->bdf_str(),

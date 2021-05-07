@@ -36,6 +36,9 @@ constexpr auto rtaddr_offset = 0x20U;
 constexpr auto ccmd_offset = 0x28U;
 constexpr auto fsts_offset = 0x34U;
 constexpr auto fectl_offset = 0x38U;
+constexpr auto iqh_offset = 0x80U;
+constexpr auto iqt_offset = 0x88U;
+constexpr auto iqa_offset = 0x90U;
 
 /*
  * Register fields. Each field has a mask and a "from" value used

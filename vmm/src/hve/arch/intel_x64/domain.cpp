@@ -133,16 +133,10 @@ void domain::prepare_iommus()
 
     m_ept_map.set_iommu_coherence(coherent);
     m_ept_map.set_iommu_snoop_ctl(snoop_ctl);
+    m_ept_map.flush_tables();
 
-    if (!coherent) {
-        m_ept_map.flush_tables();
-        printv(
-            "%s: flushed domain 0x%lx EPT tables: coherent=%u, snoop_ctl=%u\n",
-            __func__,
-            this->id(),
-            coherent,
-            snoop_ctl);
-    }
+    printv("%s: flushed domain 0x%lx EPT tables: coherent=%u, snoop_ctl=%u\n",
+           __func__, this->id(), coherent, snoop_ctl);
 
     m_dma_map_ready = true;
 }
@@ -163,6 +157,8 @@ void domain::map_root_dma()
     auto catchall_iommu = this->find_catchall_iommu();
     expects(catchall_iommu != nullptr);
 
+    printv("%s: Mapping devices under catchall IOMMU...", __func__);
+
     for (auto bus = 0U; bus < pci_nr_bus; bus++) {
         if (!pci_bus_has_passthru_dev(bus)) {
             catchall_iommu->map_bus(bus, this);
@@ -180,6 +176,10 @@ void domain::map_root_dma()
         }
     }
 
+    printf("done\n");
+
+    printv("%s: Mapping non-catchall devices...", __func__);
+
     for (const auto pdev : m_pci_devs) {
         auto iommu = pdev->m_iommu;
 
@@ -190,6 +190,8 @@ void domain::map_root_dma()
             iommu->map_bdf(bus, devfn, this);
         }
     }
+
+    printf("done\n");
 
     for (auto iommu : m_iommu_set) {
         if (iommu->dma_remapping_enabled()) {

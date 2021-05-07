@@ -60,7 +60,7 @@
  * increasing "K" by 1 will double the amount of memory.
  */
 #ifndef PAGE_POOL_K
-#define PAGE_POOL_K (18ULL)
+#define PAGE_POOL_K (20ULL) /* 4 GB */
 #endif
 
 /*
@@ -72,7 +72,7 @@
 */
 
 #ifndef HUGE_POOL_K
-#define HUGE_POOL_K (19ULL)
+#define HUGE_POOL_K (24ULL) /* 64 GB */
 #endif
 /*
 * Memory Map Pool K
