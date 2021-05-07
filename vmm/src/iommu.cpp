@@ -273,7 +273,7 @@ void iommu::init_regs()
 {
     m_ver = this->read32(ver_offset);
 
-    printv("iommu[%u]: version %u.%u\n", m_id, (m_ver & 0xF0) >> 4, m_ver & 0xF);
+    printv("iommu[%u]: version %u\n", m_id, m_ver);
 
     m_did_bits = (uint8_t)(4 + ((m_cap & cap_nd_mask) << 1));
     m_mgaw = ((m_cap & cap_mgaw_mask) >> cap_mgaw_from) + 1;

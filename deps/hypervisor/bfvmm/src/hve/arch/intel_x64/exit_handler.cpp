@@ -64,6 +64,12 @@ handle_exit(
 {
     guard_exceptions([&]() {
 
+        const auto reason = vmcs_n::exit_reason::basic_exit_reason::get();
+
+        if (reason != 3) {
+            bfdebug_nhex(0, "vmexit", reason);
+        }
+
         for (const auto &d : exit_handler->m_exit_handlers) {
             d(vcpu);
         }
