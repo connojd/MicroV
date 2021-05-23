@@ -337,7 +337,7 @@ efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *systab)
         return EFI_ABORTED;
     }
 
-    g_enable_winpv = 1;
+    g_enable_winpv = 0;
     parse_cmdline(image);
 
 #ifdef USE_XUE
